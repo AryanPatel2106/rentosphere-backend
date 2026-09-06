@@ -12,7 +12,7 @@ app.use(cookieParser())
 // cors configuration
 app.use(
     cors({
-        origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:5173', // for vite application
+        origin: process.env.CORS_ORIGIN?.split(',') || 'https://rentosphere.clouddrive.page', // for vite application
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Authorization', 'Content-Type'],

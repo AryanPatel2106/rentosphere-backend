@@ -179,7 +179,7 @@ const loginUser = asyncHandler(async (req, res) => {
         .status(200)
         .cookie("accessToken", accessToken, {
             httpOnly: true,
-            secure: false
+            secure: true
         })
         .json(
             new ApiResponse(
