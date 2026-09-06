@@ -25,7 +25,7 @@ app.get("/health", (req, res) => {
         status: "OK"
     });
 });
-// routes
+// route
 import authRoutes from "./routes/auth.routes.js";
 import locationRouter from "./routes/location.routes.js";
 import propertyRouter from "./routes/property.routes.js";
