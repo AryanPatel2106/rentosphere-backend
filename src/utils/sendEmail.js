@@ -5,27 +5,39 @@ import dotenv from "dotenv";
 dotenv.config();
 
 function getSesClient() {
-  return new SESClient({
-    region: process.env.AWS_REGION,
-    credentials: {
+  const config = {
+    region: process.env.AWS_REGION || "ap-south-1",
+  };
+
+  // Only supply static credentials if explicitly provided in environment (e.g. local .env).
+  // In production on AWS (ECS, Fargate, EC2), credentials are automatically retrieved from the
+  // IAM Task Role (rentosphere-ecs-task-role) via container metadata.
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    },
-  });
+      ...(process.env.AWS_SESSION_TOKEN && {
+        sessionToken: process.env.AWS_SESSION_TOKEN,
+      }),
+    };
+  }
+
+  return new SESClient(config);
 }
 
 const sendEmail = async (options) => {
+  const clientUrl = process.env.CLIENT_URL || "https://rentosphere.clouddrive.page";
   const mailGenerator = new Mailgen({
     theme: "default",
     product: {
       name: "Rentosphere",
-      link: process.env.CLIENT_URL || "https://rentosphere.in",
-      logo: `${process.env.CLIENT_URL}/logo.png` || "https://rentosphere.in/logo.png",
+      link: clientUrl,
+      logo: `${clientUrl}/logo.png`,
       copyright: `Copyright © ${new Date().getFullYear()} Rentosphere. All rights reserved.`,
     },
   });
 
-  const fromEmail = process.env.SES_FROM_EMAIL || "noreply@rentosphere.in";
+  const fromEmail = process.env.SES_FROM_EMAIL || "aryanpatel8082@gmail.com";
 
   const emailTextual = mailGenerator.generatePlaintext(options.mailgenContent);
   const emailHtml = mailGenerator.generate(options.mailgenContent);
@@ -57,7 +69,7 @@ const sendEmail = async (options) => {
     console.error("Email service failed:", {
       name: error.name,
       message: error.message,
-      region: process.env.AWS_REGION,
+      region: process.env.AWS_REGION || "ap-south-1",
       fromEmail,
       toEmail: options.email,
     });
@@ -74,23 +86,26 @@ const sendEmail = async (options) => {
 };
 
 const contactUsSendEmail = async (options) => {
+  const clientUrl = process.env.CLIENT_URL || "https://rentosphere.clouddrive.page";
   const mailGenerator = new Mailgen({
     theme: "default",
     product: {
       name: "Rentosphere",
-      link: process.env.CLIENT_URL || "https://rentosphere.in",
-      logo: `${process.env.CLIENT_URL}/logo.png` || "https://rentosphere.in/logo.png",
+      link: clientUrl,
+      logo: `${clientUrl}/logo.png`,
     },
   });
 
-  const fromEmail = options.email;
+  const fromEmail = process.env.SES_FROM_EMAIL || "aryanpatel8082@gmail.com";
+  const toEmail = process.env.SES_CONTACT_US_EMAIL || "aryanpatel80822@gmail.com";
 
   const emailTextual = mailGenerator.generatePlaintext(options.mailgenContent);
   const emailHtml = mailGenerator.generate(options.mailgenContent);
   const command = new SendEmailCommand({
     Source: fromEmail,
+    ReplyToAddresses: options.email ? [options.email] : undefined,
     Destination: {
-      ToAddresses: [process.env.SES_CONTACT_US_EMAIL || "aryanpatel80822@gmail.com"],
+      ToAddresses: [toEmail],
     },
     Message: {
       Subject: {
@@ -110,14 +125,14 @@ const contactUsSendEmail = async (options) => {
   try {
     const sesClient = getSesClient();
     await sesClient.send(command);
-    console.log(`Email sent successfully to ${options.email}`);
+    console.log(`Contact email sent successfully to ${toEmail}`);
   } catch (error) {
     console.error("Email service failed:", {
       name: error.name,
       message: error.message,
-      region: process.env.AWS_REGION,
-      fromEmail: options.email,
-      toEmail: process.env.SES_CONTACT_US_EMAIL || "aryanpatel8082@gmail.com",
+      region: process.env.AWS_REGION || "ap-south-1",
+      fromEmail,
+      toEmail,
     });
 
     if (error.name === "MessageRejected") {
@@ -236,7 +251,7 @@ const contactUsMailgenContent = (name, email, message) => {
       signature: "The Rentosphere Team",
     },
   };
-}
+};
 
 export {
   sendEmail,

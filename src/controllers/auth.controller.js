@@ -393,16 +393,16 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
     user.passwordResetTokenHash = hashedToken;
     user.passwordResetTokenExpiry = new Date(tokenExpiry);
-    await user.save()
+    await user.save();
 
-    sendEmail({
+    await sendEmail({
         email,
         subject: "Forgot Password",
         mailgenContent: forgotPasswordMailgenContent(
             user.fullName, 
-            `${process.env.CLIENT_URL || "http://localhost:5000"}/reset-password?token=${unHashedToken}`
+            `${process.env.CLIENT_URL || "https://rentosphere.clouddrive.page"}/reset-password?token=${unHashedToken}`
         )
-    })
+    });
 
     return res
         .status(200)
