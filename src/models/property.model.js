@@ -15,6 +15,17 @@ const propertySchema = new mongoose.Schema({
         type: Object,
         required: true
     },
+    location: {
+        type: {
+            type: String,
+            enum: ["Point"],
+            default: "Point"
+        },
+        coordinates: {
+            type: [Number], // [longitude, latitude]
+            default: undefined
+        }
+    },
     BHKType: {
         type: String,
         enum: ["","BHK Type","1RK","1BHK", "2BHK", "3BHK", "4BHK"],
@@ -47,6 +58,8 @@ const propertySchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
+propertySchema.index({ location: "2dsphere" }, { sparse: true });
+
 const Property = mongoose.model("Property", propertySchema);
 
-export { Property };
+export { Property };
