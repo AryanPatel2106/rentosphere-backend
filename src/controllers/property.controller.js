@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { User } from "../models/user.model.js";
 import { Property } from "../models/property.model.js";
+import { RentalRequest } from "../models/rentalRequest.model.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -150,7 +151,7 @@ const getProperties = asyncHandler(async (req, res) => {
     // ── Build Filter Query ──────────────────────────────────────────────────────
     const filterQuery = {
         owner: { $exists: true, $ne: null },
-        status: { $ne: "inactive" }
+        status: "active"
     };
 
     // Text / keyword filter
@@ -456,18 +457,31 @@ const updateProperty = asyncHandler(async (req, res) => {
     }
 
 
-    const updatedProperty =
-        await Property.findByIdAndUpdate(
-            propertyId,
-            {
-                $set: req.body
-            },
-            {
-                new: true,
-                runValidators: true
-            }
-        );
+    const updateData = { ...req.body };
+    if (updateData.bhkType || updateData.BHKType) {
+        updateData.BHKType = normalizeBhk(updateData.BHKType || updateData.bhkType);
+    }
+    if (updateData.furnishing || updateData.Furnishing) {
+        updateData.Furnishing = normalizeFurnishing(updateData.Furnishing || updateData.furnishing);
+    }
+    if (updateData.rent !== undefined) updateData.rent = Number(updateData.rent);
+    if (updateData.deposit !== undefined) updateData.deposit = Number(updateData.deposit);
+    if (updateData.builtUpArea !== undefined) updateData.builtUpArea = Number(updateData.builtUpArea);
+    if (updateData.bathrooms !== undefined) updateData.bathrooms = Number(updateData.bathrooms);
+    if (updateData.balconies !== undefined) updateData.balconies = Number(updateData.balconies);
+    if (updateData.floor !== undefined) updateData.floor = Number(updateData.floor);
+    if (updateData.totalFloors !== undefined) updateData.totalFloors = Number(updateData.totalFloors);
 
+    const updatedProperty = await Property.findByIdAndUpdate(
+        propertyId,
+        {
+            $set: updateData
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    );
 
     return res
         .status(200)
@@ -482,41 +496,21 @@ const updateProperty = asyncHandler(async (req, res) => {
 
 
 const deleteProperty = asyncHandler(async (req, res) => {
-
     const { propertyId } = req.params;
 
-
-    const property = await Property.findById(
-        propertyId
-    );
-
+    const property = await Property.findById(propertyId);
 
     if (!property) {
-        throw new ApiError(
-            404,
-            "Property not found"
-        );
+        throw new ApiError(404, "Property not found");
     }
 
-
-    if (
-        property.owner.toString() !==
-        req.user._id.toString()
-    ) {
-        throw new ApiError(
-            403,
-            "You are not allowed to delete this property"
-        );
+    if (property.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "You are not allowed to delete this property");
     }
 
-
-    await Property.findByIdAndUpdate(
-        propertyId,
-        {
-            status: "inactive"
-        }
-    );
-
+    await Property.findByIdAndUpdate(propertyId, {
+        status: "inactive"
+    });
 
     return res
         .status(200)
@@ -530,11 +524,371 @@ const deleteProperty = asyncHandler(async (req, res) => {
 });
 
 
+// ── Shortlist Controllers ──────────────────────────────────────────────
+const toggleShortlist = asyncHandler(async (req, res) => {
+    const { propertyId } = req.params;
+    const property = await Property.findById(propertyId);
+    if (!property) {
+        throw new ApiError(404, "Property not found");
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    const currentShortlists = (user.shortlists || []).map((id) => id.toString());
+    const isShortlisted = currentShortlists.includes(propertyId.toString());
+
+    let updatedUser;
+    if (isShortlisted) {
+        updatedUser = await User.findByIdAndUpdate(
+            req.user._id,
+            { $pull: { shortlists: propertyId } },
+            { new: true }
+        );
+    } else {
+        updatedUser = await User.findByIdAndUpdate(
+            req.user._id,
+            { $addToSet: { shortlists: propertyId } },
+            { new: true }
+        );
+    }
+
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                isShortlisted: !isShortlisted,
+                shortlists: updatedUser.shortlists
+            },
+            !isShortlisted
+                ? "Property added to shortlists"
+                : "Property removed from shortlists"
+        )
+    );
+});
+
+const getShortlists = asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user._id).populate({
+        path: "shortlists",
+        match: { status: { $ne: "inactive" } },
+        populate: { path: "owner", select: "fullName email mobileNumber" }
+    });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, user.shortlists || [], "Shortlists fetched successfully")
+    );
+});
+
+
+// ── Rental Request & Booking Flow ──────────────────────────────────────
+const createRentalRequest = asyncHandler(async (req, res) => {
+    const { propertyId, moveInDate, message } = req.body;
+
+    const property = await Property.findById(propertyId);
+    if (!property) {
+        throw new ApiError(404, "Property not found");
+    }
+
+    if (property.owner.toString() === req.user._id.toString()) {
+        throw new ApiError(400, "You cannot request your own property");
+    }
+
+    if (property.status === "rented") {
+        throw new ApiError(400, "Property is already rented and not available");
+    }
+
+    const existing = await RentalRequest.findOne({
+        property: propertyId,
+        tenant: req.user._id,
+        status: { $in: ["pending", "accepted"] }
+    });
+
+    if (existing) {
+        throw new ApiError(400, `You already have an active/pending request for this property (${existing.status})`);
+    }
+
+    const request = await RentalRequest.create({
+        property: property._id,
+        owner: property.owner,
+        tenant: req.user._id,
+        monthlyRent: property.rent,
+        deposit: property.deposit,
+        moveInDate: moveInDate || null,
+        message: message || "Interested in renting this property",
+        status: "pending"
+    });
+
+    const populated = await RentalRequest.findById(request._id)
+        .populate("property")
+        .populate("tenant", "fullName email mobileNumber");
+
+    return res.status(201).json(
+        new ApiResponse(201, populated, "Rental request submitted successfully")
+    );
+});
+
+const getOwnerRentalRequests = asyncHandler(async (req, res) => {
+    const requests = await RentalRequest.find({ owner: req.user._id })
+        .populate("property")
+        .populate("tenant", "fullName email mobileNumber")
+        .sort({ createdAt: -1 });
+
+    return res.status(200).json(
+        new ApiResponse(200, requests, "Owner rental requests fetched successfully")
+    );
+});
+
+const getTenantRentalRequests = asyncHandler(async (req, res) => {
+    const requests = await RentalRequest.find({ tenant: req.user._id })
+        .populate("property")
+        .populate("owner", "fullName email mobileNumber")
+        .sort({ createdAt: -1 });
+
+    return res.status(200).json(
+        new ApiResponse(200, requests, "Tenant rental requests fetched successfully")
+    );
+});
+
+const acceptRentalRequest = asyncHandler(async (req, res) => {
+    const { requestId } = req.params;
+    const request = await RentalRequest.findById(requestId);
+    if (!request) {
+        throw new ApiError(404, "Rental request not found");
+    }
+
+    if (request.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "Not authorized to accept this request");
+    }
+
+    request.status = "accepted";
+    await request.save();
+
+    // Mark property rented and assign currentTenant -> this automatically removes property from public search!
+    await Property.findByIdAndUpdate(request.property, {
+        status: "rented",
+        currentTenant: request.tenant
+    });
+
+    // Automatically decline other pending requests for this property
+    await RentalRequest.updateMany(
+        {
+            property: request.property,
+            _id: { $ne: request._id },
+            status: "pending"
+        },
+        { status: "rejected" }
+    );
+
+    const populated = await RentalRequest.findById(request._id)
+        .populate("property")
+        .populate("tenant", "fullName email mobileNumber");
+
+    return res.status(200).json(
+        new ApiResponse(200, populated, "Rental request accepted. Property is now rented!")
+    );
+});
+
+const rejectRentalRequest = asyncHandler(async (req, res) => {
+    const { requestId } = req.params;
+    const request = await RentalRequest.findById(requestId);
+    if (!request) {
+        throw new ApiError(404, "Rental request not found");
+    }
+
+    if (request.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "Not authorized to reject this request");
+    }
+
+    request.status = "rejected";
+    await request.save();
+
+    return res.status(200).json(
+        new ApiResponse(200, request, "Rental request rejected")
+    );
+});
+
+
+// ── Active Rented Properties for Owner ─────────────────────────────────
+const getActiveRentedProperties = asyncHandler(async (req, res) => {
+    // Find all rented properties for this owner
+    const rentedProperties = await Property.find({
+        owner: req.user._id,
+        status: "rented"
+    }).populate("currentTenant", "fullName email mobileNumber");
+
+    const propertyIds = rentedProperties.map((p) => p._id);
+    const activeRequests = await RentalRequest.find({
+        property: { $in: propertyIds },
+        status: "accepted"
+    }).populate("tenant", "fullName email mobileNumber");
+
+    const requestMap = {};
+    activeRequests.forEach((r) => {
+        requestMap[r.property.toString()] = r;
+    });
+
+    const result = rentedProperties.map((p) => {
+        const reqObj = requestMap[p._id.toString()] || null;
+        return {
+            property: p,
+            rentalRequest: reqObj
+        };
+    });
+
+    return res.status(200).json(
+        new ApiResponse(200, result, "Active rented properties fetched successfully")
+    );
+});
+
+const endLease = asyncHandler(async (req, res) => {
+    const { propertyId } = req.params;
+    const property = await Property.findById(propertyId);
+    if (!property) {
+        throw new ApiError(404, "Property not found");
+    }
+
+    if (property.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "Not authorized to manage lease for this property");
+    }
+
+    // Set property status back to active so it appears in search again
+    property.status = "active";
+    property.currentTenant = null;
+    await property.save();
+
+    // Update active rental request to completed
+    await RentalRequest.updateMany(
+        { property: propertyId, status: "accepted" },
+        { status: "completed" }
+    );
+
+    return res.status(200).json(
+        new ApiResponse(200, property, "Lease ended successfully. Property is now active and re-listed!")
+    );
+});
+
+
+// ── Payment Tracking: Online (Razorpay Simulated) & Offline ────────────
+const recordOfflinePayment = asyncHandler(async (req, res) => {
+    const { requestId } = req.params;
+    const { month, year, amount, method, notes } = req.body;
+
+    const request = await RentalRequest.findById(requestId);
+    if (!request) {
+        throw new ApiError(404, "Rental request / booking not found");
+    }
+
+    if (request.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "Only the owner can record offline payments");
+    }
+
+    if (!month || !year || !amount) {
+        throw new ApiError(400, "Month, year, and amount are required");
+    }
+
+    const newPayment = {
+        month: Number(month),
+        year: Number(year),
+        amount: Number(amount),
+        method: method || "offline",
+        status: "paid",
+        transactionId: `OFFLINE-${Date.now()}`,
+        paidAt: new Date(),
+        notes: notes || `Recorded by owner via ${method || "Cash"}`
+    };
+
+    request.payments.push(newPayment);
+    await request.save();
+
+    return res.status(200).json(
+        new ApiResponse(200, request, "Offline payment recorded successfully")
+    );
+});
+
+const createRazorpayOrder = asyncHandler(async (req, res) => {
+    const { requestId, amount, month, year } = req.body;
+    const request = await RentalRequest.findById(requestId);
+    if (!request) {
+        throw new ApiError(404, "Rental request not found");
+    }
+
+    const payAmount = Number(amount) || request.monthlyRent;
+    const orderId = `order_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const orderData = {
+        id: orderId,
+        entity: "order",
+        amount: payAmount * 100, // in paise
+        currency: "INR",
+        receipt: `rcpt_${requestId}_${month}_${year}`,
+        status: "created",
+        notes: {
+            requestId: request._id.toString(),
+            month: String(month),
+            year: String(year)
+        }
+    };
+
+    return res.status(200).json(
+        new ApiResponse(200, orderData, "Razorpay simulated order created successfully")
+    );
+});
+
+const verifyRazorpayPayment = asyncHandler(async (req, res) => {
+    const { requestId, orderId, paymentId, amount, month, year, method } = req.body;
+
+    const request = await RentalRequest.findById(requestId);
+    if (!request) {
+        throw new ApiError(404, "Rental request not found");
+    }
+
+    const payAmount = Number(amount) || request.monthlyRent;
+    const finalPaymentId = paymentId || `pay_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    const newPayment = {
+        month: Number(month) || new Date().getMonth() + 1,
+        year: Number(year) || new Date().getFullYear(),
+        amount: payAmount,
+        method: method || "online",
+        status: "paid",
+        transactionId: finalPaymentId,
+        orderId: orderId || `order_sim_${Date.now()}`,
+        paidAt: new Date(),
+        notes: "Paid online via Razorpay (Simulated)"
+    };
+
+    request.payments.push(newPayment);
+    await request.save();
+
+    return res.status(200).json(
+        new ApiResponse(200, request, "Payment processed and recorded successfully")
+    );
+});
+
+
 export {
     createProperty,
     getProperties,
     getPropertyById,
     getMyProperties,
     updateProperty,
-    deleteProperty
+    deleteProperty,
+    toggleShortlist,
+    getShortlists,
+    createRentalRequest,
+    getOwnerRentalRequests,
+    getTenantRentalRequests,
+    acceptRentalRequest,
+    rejectRentalRequest,
+    getActiveRentedProperties,
+    endLease,
+    recordOfflinePayment,
+    createRazorpayOrder,
+    verifyRazorpayPayment
 };

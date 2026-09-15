@@ -41,7 +41,13 @@ const userSchema = new Schema({
     passwordResetTokenExpiry: {
         type: Date,
         default: null
-    }
+    },
+    shortlists: [
+        {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Property"
+        }
+    ]
 }, {timestamps: true});
 
 userSchema.pre("save", async function(){

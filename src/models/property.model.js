@@ -19,12 +19,10 @@ const propertySchema = new mongoose.Schema(
         location: {
             type: {
                 type: String,
-                enum: ["Point"],
-                default: "Point"
+                enum: ["Point"]
             },
             coordinates: {
-                type: [Number], // [longitude, latitude]
-                default: undefined
+                type: [Number] // [longitude, latitude]
             }
         },
         rent: {
@@ -113,6 +111,11 @@ const propertySchema = new mongoose.Schema(
             enum: ["active", "inactive", "rented"],
             default: "active"
         },
+        currentTenant: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null
+        },
         views: {
             type: Number,
             default: 0
@@ -120,6 +123,13 @@ const propertySchema = new mongoose.Schema(
     },
     { timestamps: true }
 );
+
+propertySchema.pre("save", function (next) {
+    if (this.location && (!this.location.coordinates || this.location.coordinates.length === 0)) {
+        this.location = undefined;
+    }
+    if (typeof next === "function") next();
+});
 
 propertySchema.index({ location: "2dsphere" }, { sparse: true });
 propertySchema.index({
