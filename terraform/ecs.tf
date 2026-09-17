@@ -83,6 +83,14 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name      = "GOOGLE_MAPS_API_KEY"
           valueFrom = "${var.secrets_manager_arn}:GOOGLE_MAPS_API_KEY::"
+        },
+        {
+          name      = "RAZORPAY_KEY_ID"
+          valueFrom = "${var.secrets_manager_arn}:RAZORPAY_KEY_ID::"
+        },
+        {
+          name      = "RAZORPAY_KEY_SECRET"
+          valueFrom = "${var.secrets_manager_arn}:RAZORPAY_KEY_SECRET::"
         }
       ]
 
