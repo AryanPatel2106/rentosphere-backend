@@ -819,15 +819,58 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
     }
 
     const payAmount = Number(amount) || request.monthlyRent;
-    const orderId = `order_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const amountInPaise = Math.round(payAmount * 100);
 
+    // If live/test Razorpay keys are configured, create a real order via Razorpay API
+    if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+        try {
+            const authHeader = 'Basic ' + Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString('base64');
+            const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': authHeader
+                },
+                body: JSON.stringify({
+                    amount: amountInPaise,
+                    currency: 'INR',
+                    receipt: `rcpt_${requestId.toString().slice(-8)}_${month}_${year}`,
+                    notes: {
+                        requestId: request._id.toString(),
+                        month: String(month),
+                        year: String(year)
+                    }
+                })
+            });
+
+            if (rzpRes.ok) {
+                const liveOrder = await rzpRes.json();
+                return res.status(200).json(
+                    new ApiResponse(200, {
+                        ...liveOrder,
+                        keyId: process.env.RAZORPAY_KEY_ID,
+                        isSimulated: false
+                    }, "Razorpay live order created successfully")
+                );
+            } else {
+                const errBody = await rzpRes.text();
+                console.error("Razorpay order API response error:", errBody);
+            }
+        } catch (err) {
+            console.error("Error creating live Razorpay order:", err);
+        }
+    }
+
+    // Fallback: Simulated order
+    const orderId = `order_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const orderData = {
         id: orderId,
         entity: "order",
-        amount: payAmount * 100, // in paise
+        amount: amountInPaise,
         currency: "INR",
         receipt: `rcpt_${requestId}_${month}_${year}`,
         status: "created",
+        isSimulated: true,
         notes: {
             requestId: request._id.toString(),
             month: String(month),
@@ -841,15 +884,28 @@ const createRazorpayOrder = asyncHandler(async (req, res) => {
 });
 
 const verifyRazorpayPayment = asyncHandler(async (req, res) => {
-    const { requestId, orderId, paymentId, amount, month, year, method } = req.body;
+    const { requestId, orderId, paymentId, signature, amount, month, year, method } = req.body;
 
     const request = await RentalRequest.findById(requestId);
     if (!request) {
         throw new ApiError(404, "Rental request not found");
     }
 
+    // Verify signature if real Razorpay secret is configured and order is not simulated
+    if (process.env.RAZORPAY_KEY_SECRET && signature && !orderId?.startsWith('order_sim_')) {
+        const crypto = await import('crypto');
+        const expectedSignature = crypto
+            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .update(`${orderId}|${paymentId}`)
+            .digest('hex');
+
+        if (expectedSignature !== signature) {
+            throw new ApiError(400, "Invalid Razorpay payment signature");
+        }
+    }
+
     const payAmount = Number(amount) || request.monthlyRent;
-    const finalPaymentId = paymentId || `pay_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const finalPaymentId = paymentId || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
     const newPayment = {
         month: Number(month) || new Date().getMonth() + 1,
@@ -858,9 +914,11 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
         method: method || "online",
         status: "paid",
         transactionId: finalPaymentId,
-        orderId: orderId || `order_sim_${Date.now()}`,
+        orderId: orderId || `order_${Date.now()}`,
         paidAt: new Date(),
-        notes: "Paid online via Razorpay (Simulated)"
+        notes: orderId?.startsWith('order_sim_')
+            ? "Paid online via Razorpay Gateway (Test Mode)"
+            : "Paid online via Razorpay Payment Gateway"
     };
 
     request.payments.push(newPayment);
