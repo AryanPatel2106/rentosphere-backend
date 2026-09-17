@@ -10,12 +10,27 @@ app.use(express.static("public"))
 app.use(cookieParser())
 
 // cors configuration
+const allowedOrigins = [
+    'https://rentosphere.clouddrive.page',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:3000',
+    ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(s => s.trim()) : [])
+];
+
 app.use(
     cors({
-        origin: process.env.CORS_ORIGIN?.split(',') || 'https://rentosphere.clouddrive.page', // for vite application
+        origin: function (origin, callback) {
+            // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+            if (!origin || allowedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+            return callback(new Error(`Origin ${origin} not allowed by CORS`));
+        },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Authorization', 'Content-Type'],
+        allowedHeaders: ['Authorization', 'Content-Type', 'X-Requested-With'],
     })
 )
 

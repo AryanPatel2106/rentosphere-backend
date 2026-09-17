@@ -175,25 +175,43 @@ const loginUser = asyncHandler(async (req, res) => {
 
     const accessToken = user.generateAccessToken();
 
+    const isProduction = process.env.NODE_ENV === "production";
+    const cookieOptions = {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax"
+    };
+
     return res
         .status(200)
-        .cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true
-        })
+        .cookie("accessToken", accessToken, cookieOptions)
         .json(
             new ApiResponse(
                 200, 
-                {accessToken},
+                {
+                    accessToken,
+                    user: {
+                        _id: user._id,
+                        email: user.email,
+                        fullName: user.fullName,
+                        mobileNumber: user.mobileNumber,
+                        getUpdateOnWhatsApp: user.getUpdateOnWhatsApp
+                    }
+                },
                 "User logged in successfully."
             )
         )
 })
 
 const logoutUser = asyncHandler(async (req, res) => {
+    const isProduction = process.env.NODE_ENV === "production";
     return res
         .status(200)
-        .clearCookie("accessToken")
+        .clearCookie("accessToken", {
+            httpOnly: true,
+            secure: isProduction,
+            sameSite: isProduction ? "none" : "lax"
+        })
         .json(
             new ApiResponse(
                 200, 
