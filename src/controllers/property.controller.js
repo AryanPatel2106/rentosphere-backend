@@ -152,6 +152,7 @@ const getProperties = asyncHandler(async (req, res) => {
         longitude,
         search,
         keyword,
+        city,
         bhkType,
         furnishing,
         propertyType,
@@ -170,6 +171,11 @@ const getProperties = asyncHandler(async (req, res) => {
         owner: { $exists: true, $ne: null },
         status: "active"
     };
+
+    // City filter
+    if (city && city.trim()) {
+        filterQuery["locality.city"] = new RegExp(city.trim(), "i");
+    }
 
     // Text / keyword filter
     const textSearch = search || keyword;
@@ -369,6 +375,17 @@ const getProperties = asyncHandler(async (req, res) => {
     }
 
     // ── 2. Standard Search without Coordinates ────────────────────────────────
+    if (!filterQuery.$or && searchText && searchText.trim()) {
+        const regex = new RegExp(searchText.trim(), "i");
+        filterQuery.$or = [
+            { title: { $regex: regex } },
+            { description: { $regex: regex } },
+            { "locality.label": { $regex: regex } },
+            { "locality.text": { $regex: regex } },
+            { "locality.city": { $regex: regex } }
+        ];
+    }
+
     let sortObj = { createdAt: -1 };
     if (sortBy === "rent_asc") {
         sortObj = { rent: 1, createdAt: -1 };
