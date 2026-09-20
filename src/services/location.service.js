@@ -35,7 +35,7 @@ export const autocompletePlaces = async (query) => {
 
 };
 
-const coordinatesCache = new Map();
+import { geocodeCache } from "../utils/cache.js";
 
 /**
  * Fetch latitude & longitude for a given Google placeId
@@ -43,8 +43,8 @@ const coordinatesCache = new Map();
 export const getPlaceCoordinates = async (placeId) => {
     if (!placeId) return null;
 
-    if (coordinatesCache.has(placeId)) {
-        return coordinatesCache.get(placeId);
+    if (geocodeCache.has(placeId)) {
+        return geocodeCache.get(placeId);
     }
 
     try {
@@ -74,7 +74,7 @@ export const getPlaceCoordinates = async (placeId) => {
                 label: data.displayName?.text || "",
                 address: data.formattedAddress || ""
             };
-            coordinatesCache.set(placeId, coords);
+            geocodeCache.set(placeId, coords);
             return coords;
         }
 
@@ -92,8 +92,8 @@ export const searchPlaceCoordinates = async (textQuery) => {
     if (!textQuery || !textQuery.trim()) return null;
 
     const cacheKey = `query:${textQuery.toLowerCase().trim()}`;
-    if (coordinatesCache.has(cacheKey)) {
-        return coordinatesCache.get(cacheKey);
+    if (geocodeCache.has(cacheKey)) {
+        return geocodeCache.get(cacheKey);
     }
 
     try {
@@ -130,7 +130,7 @@ export const searchPlaceCoordinates = async (textQuery) => {
                 label: firstPlace.displayName?.text || "",
                 address: firstPlace.formattedAddress || ""
             };
-            coordinatesCache.set(cacheKey, coords);
+            geocodeCache.set(cacheKey, coords);
             return coords;
         }
 

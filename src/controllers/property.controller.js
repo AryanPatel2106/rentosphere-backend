@@ -314,21 +314,26 @@ const getProperties = asyncHandler(async (req, res) => {
             pipeline.push({ $sort: { createdAt: -1 } });
         }
 
-        pipeline.push({ $skip: skip });
-        pipeline.push({ $limit: limit });
+        // Single-pass facet for data and total count (eliminates 2nd database roundtrip)
         pipeline.push({
-            $project: {
-                ...projection,
-                distance: 1
+            $facet: {
+                metadata: [{ $count: "total" }],
+                data: [
+                    { $skip: skip },
+                    { $limit: limit },
+                    {
+                        $project: {
+                            ...projection,
+                            distance: 1
+                        }
+                    }
+                ]
             }
         });
 
-        const properties = await Property.aggregate(pipeline);
-
-        const total = await Property.countDocuments({
-            ...filterQuery,
-            "location.coordinates": { $exists: true }
-        });
+        const [results] = await Property.aggregate(pipeline);
+        const properties = results?.data || [];
+        const total = results?.metadata?.[0]?.total || 0;
         const hasMore = skip + properties.length < total;
 
         return res.status(200).json(
@@ -357,13 +362,17 @@ const getProperties = asyncHandler(async (req, res) => {
         sortObj = { createdAt: -1 };
     }
 
-    const properties = await Property.find(filterQuery)
-        .select(projection)
-        .sort(sortObj)
-        .skip(skip)
-        .limit(limit);
+    // Run query and count in parallel using .lean() to bypass hydration overhead
+    const [properties, total] = await Promise.all([
+        Property.find(filterQuery)
+            .select(projection)
+            .sort(sortObj)
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Property.countDocuments(filterQuery)
+    ]);
 
-    const total = await Property.countDocuments(filterQuery);
     const hasMore = skip + properties.length < total;
 
     return res.status(200).json(

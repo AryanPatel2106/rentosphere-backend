@@ -138,8 +138,14 @@ propertySchema.index({
     "locality.text": "text",
     "locality.label": "text"
 });
-propertySchema.index({ rent: 1, BHKType: 1, status: 1 });
+propertySchema.index({ status: 1, rent: 1, BHKType: 1 });
+propertySchema.index({ status: 1, propertyType: 1, rent: 1 });
+propertySchema.index({ status: 1, Furnishing: 1 });
+propertySchema.index({ status: 1, preferredTenant: 1 });
+propertySchema.index({ status: 1, Availability: 1 });
+propertySchema.index({ status: 1, "locality.city": 1 });
 propertySchema.index({ status: 1, createdAt: -1 });
+propertySchema.index({ owner: 1, createdAt: -1 });
 
 const Property = mongoose.model("Property", propertySchema);
 
