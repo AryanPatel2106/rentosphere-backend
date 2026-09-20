@@ -291,4 +291,61 @@ describe("Rentosphere Functional Test Suite", () => {
             });
         });
     });
+
+    describe("8. Smart ML Rent Valuation Engine", () => {
+        it("POST /api/v1/property/estimate-rent returns weighted KNN price prediction with confidence & comps", async () => {
+            const payload = {
+                Locality: {
+                    label: "T. Nagar, Chennai",
+                    city: "Chennai",
+                    coordinates: [80.2337, 13.0418]
+                },
+                bhkType: "2 BHK",
+                propertyType: "Apartment",
+                Furnishing: "Semi-Furnished",
+                builtUpArea: 1050,
+                parking: true,
+                petFriendly: true,
+                amenities: ["Lift", "Power Backup", "Gym"]
+            };
+
+            const res = await fetch(`${baseUrl}/api/v1/property/estimate-rent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.ok(typeof body.data.recommendedRent === "number");
+            assert.ok(body.data.recommendedRent > 0);
+            assert.ok(body.data.minRent <= body.data.recommendedRent);
+            assert.ok(body.data.maxRent >= body.data.recommendedRent);
+            assert.ok(["High", "Good", "Fair"].includes(body.data.confidence));
+            assert.ok(Array.isArray(body.data.insights));
+            assert.ok(body.data.insights.length > 0);
+            assert.ok(Array.isArray(body.data.comparables));
+        });
+
+        it("POST /api/v1/property/estimate-rent handles fallback smoothly when coordinates are missing", async () => {
+            const payload = {
+                bhkType: "1 BHK",
+                propertyType: "Independent House",
+                Furnishing: "Unfurnished"
+            };
+
+            const res = await fetch(`${baseUrl}/api/v1/property/estimate-rent`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.ok(body.data.recommendedRent > 0);
+            assert.equal(body.data.searchStrategy, "heuristic_baseline");
+        });
+    });
 });

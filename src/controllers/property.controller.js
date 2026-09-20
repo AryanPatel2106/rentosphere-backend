@@ -7,6 +7,7 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { getPlaceCoordinates, searchPlaceCoordinates } from "../services/location.service.js";
 import { generatePresignedUploadUrl, uploadDirectToS3 } from "../services/s3.service.js";
+import { estimateRent } from "../services/rentEstimator.service.js";
 import {
   sendEmailSafe,
   propertyPublishedMailgenContent,
@@ -1176,6 +1177,13 @@ const uploadImageDirect = asyncHandler(async (req, res) => {
     );
 });
 
+const estimateRentPrice = asyncHandler(async (req, res) => {
+    const estimation = await estimateRent(req.body || {});
+    return res.status(200).json(
+        new ApiResponse(200, estimation, "Rent price estimation generated successfully")
+    );
+});
+
 export {
     createProperty,
     getProperties,
@@ -1196,5 +1204,6 @@ export {
     createRazorpayOrder,
     verifyRazorpayPayment,
     getUploadPresignedUrl,
-    uploadImageDirect
+    uploadImageDirect,
+    estimateRentPrice
 };

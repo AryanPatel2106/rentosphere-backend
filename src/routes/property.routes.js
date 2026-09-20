@@ -20,7 +20,8 @@ import {
     createRazorpayOrder,
     verifyRazorpayPayment,
     getUploadPresignedUrl,
-    uploadImageDirect
+    uploadImageDirect,
+    estimateRentPrice
 } from "../controllers/property.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -36,6 +37,7 @@ const router = Router();
 // Public routes
 router.get("/get-properties", getProperties);
 router.get("/property-info/:propertyId", getPropertyById);
+router.post("/estimate-rent", estimateRentPrice);
 
 // Protected routes
 router.post("/", verifyJWT, createProperty);
