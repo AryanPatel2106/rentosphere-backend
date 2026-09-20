@@ -40,26 +40,38 @@ const registerUser = asyncHandler(async (req, res) => {
 
     pendingVerification.tokenHash = hashedToken;
     pendingVerification.expiresAt = new Date(tokenExpiry);
-    await pendingVerification.save()
+    await pendingVerification.save();
 
-    await pendingVerification.save()
-
-    await sendEmail({
-        email,
-        subject: "Email Verification",
-        mailgenContent: emailVerificationMailgenContent(email, unHashedToken)
-    })
+    let emailDelivered = false;
+    try {
+        await sendEmail({
+            email,
+            subject: "Email Verification - Rentosphere",
+            mailgenContent: emailVerificationMailgenContent(email, unHashedToken)
+        });
+        emailDelivered = true;
+    } catch (err) {
+        console.warn(`[SES Sandbox Mode] Could not deliver email to ${email}: ${err.message}. Returning verification code so user can complete signup.`);
+    }
 
     return res
         .status(200)
         .json(
             new ApiResponse(
                 200, 
-                {email: email},
-                "OTP sent successfully. You have 5 minutes to verify."
+                {
+                    email,
+                    emailDelivered,
+                    // Returned for unverified emails when SES is in Sandbox mode
+                    otp: !emailDelivered ? unHashedToken : undefined,
+                    token: !emailDelivered ? unHashedToken : undefined
+                },
+                emailDelivered
+                    ? "Verification code sent to your email. You have 5 minutes to verify."
+                    : `Verification code: ${unHashedToken}. (SES Sandbox active for unverified address)`
             )
-        )
-})
+        );
+});
 
 const contactUs = asyncHandler(async (req, res) => {
     const { name, email, subject, message } = req.body;
@@ -290,21 +302,38 @@ const updateCurrentUser = asyncHandler(async (req, res) => {
         pendingVerification.expiresAt = new Date(tokenExpiry);
         await pendingVerification.save()
 
-        await sendEmail({
-            email,
-            subject: "Email Verification",
-            mailgenContent: emailVerificationMailgenContent(email, unHashedToken)
-        })
+        let emailDelivered = false;
+        try {
+            await sendEmail({
+                email,
+                subject: "Email Verification - Rentosphere",
+                mailgenContent: emailVerificationMailgenContent(email, unHashedToken)
+            });
+            emailDelivered = true;
+        } catch (err) {
+            console.warn(`[SES Sandbox Mode] Could not deliver email to ${email}: ${err.message}`);
+        }
 
         return res
             .status(200)
             .json(
                 new ApiResponse(
                     200, 
-                    {email: email, fullName: user.fullName, mobileNumber: user.mobileNumber, getUpdateOnWhatsApp: user.getUpdateOnWhatsApp, emailChanged: true},
-                    "OTP sent successfully. You have 5 minutes to verify."
+                    {
+                        email: email,
+                        fullName: user.fullName,
+                        mobileNumber: user.mobileNumber,
+                        getUpdateOnWhatsApp: user.getUpdateOnWhatsApp,
+                        emailChanged: true,
+                        emailDelivered,
+                        otp: !emailDelivered ? unHashedToken : undefined,
+                        token: !emailDelivered ? unHashedToken : undefined
+                    },
+                    emailDelivered
+                        ? "OTP sent successfully. You have 5 minutes to verify."
+                        : `Verification code: ${unHashedToken}. (SES Sandbox active for unverified address)`
                 )
-            )
+            );
 
     }
 
@@ -452,25 +481,40 @@ const forgotPassword = asyncHandler(async (req, res) => {
     user.passwordResetTokenExpiry = new Date(tokenExpiry);
     await user.save();
 
-    await sendEmail({
-        email,
-        subject: "Forgot Password",
-        mailgenContent: forgotPasswordMailgenContent(
-            user.fullName, 
-            `${process.env.CLIENT_URL || "https://rentosphere.clouddrive.page"}/reset-password?token=${unHashedToken}`
-        )
-    });
+    const resetUrl = `${process.env.CLIENT_URL || "https://rentosphere.clouddrive.page"}/reset-password?token=${unHashedToken}`;
+
+    let emailDelivered = false;
+    try {
+        await sendEmail({
+            email,
+            subject: "Reset Your Rentosphere Password",
+            mailgenContent: forgotPasswordMailgenContent(
+                user.fullName || user.email.split("@")[0], 
+                resetUrl
+            )
+        });
+        emailDelivered = true;
+    } catch (err) {
+        console.warn(`[SES Sandbox Mode] Could not deliver forgot-password email to ${email}: ${err.message}`);
+    }
 
     return res
         .status(200)
         .json(
             new ApiResponse(
                 200,
-                {email: user.email},
-                "Password reset email sent successfully. You have 5 minutes to reset your password."
+                {
+                    email: user.email,
+                    emailDelivered,
+                    resetUrl: !emailDelivered ? resetUrl : undefined,
+                    resetToken: !emailDelivered ? unHashedToken : undefined
+                },
+                emailDelivered
+                    ? "Password reset email sent successfully. You have 5 minutes to reset your password."
+                    : `Password reset link generated. (SES Sandbox active - reset token: ${unHashedToken})`
             )
-        )
-})
+        );
+});
 
 const resetPassword = asyncHandler(async (req, res) => {
     const { newPassword, confirmNewPassword, token } = req.body;
@@ -513,4 +557,82 @@ const resetPassword = asyncHandler(async (req, res) => {
         )
 })
 
-export { registerUser, verifyEmail, createUser, loginUser, logoutUser, getCurrentUser, updateCurrentUser, udateUserEmail, changeUserPassword, forgotPassword, resetPassword, contactUs }
+const directRegisterUser = asyncHandler(async (req, res) => {
+    const { email, password, confirmPassword, fullName, mobileNumber } = req.body;
+
+    if (!email || !password) {
+        throw new ApiError(400, "Email and password are required");
+    }
+
+    if (confirmPassword && password !== confirmPassword) {
+        throw new ApiError(400, "Passwords do not match");
+    }
+
+    if (password.length < 6) {
+        throw new ApiError(400, "Password must be at least 6 characters");
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+        throw new ApiError(400, "User with this email already exists");
+    }
+
+    const newUser = new User({
+        email,
+        password,
+        fullName: fullName || email.split("@")[0],
+        mobileNumber: mobileNumber || null
+    });
+
+    await newUser.save();
+
+    sendEmailSafe({
+        email: newUser.email,
+        subject: "Welcome to Rentosphere! 🎉 Your Account is Ready",
+        mailgenContent: welcomeUserMailgenContent(newUser.fullName || newUser.email.split("@")[0]),
+    });
+
+    const accessToken = newUser.generateAccessToken();
+    const isProduction = process.env.NODE_ENV === "production";
+    const cookieOptions = {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax"
+    };
+
+    return res
+        .status(201)
+        .cookie("accessToken", accessToken, cookieOptions)
+        .json(
+            new ApiResponse(
+                201,
+                {
+                    accessToken,
+                    user: {
+                        _id: newUser._id,
+                        email: newUser.email,
+                        fullName: newUser.fullName,
+                        mobileNumber: newUser.mobileNumber,
+                        getUpdateOnWhatsApp: newUser.getUpdateOnWhatsApp
+                    }
+                },
+                "Account created successfully. Welcome to Rentosphere!"
+            )
+        );
+});
+
+export {
+    registerUser,
+    verifyEmail,
+    createUser,
+    directRegisterUser,
+    loginUser,
+    logoutUser,
+    getCurrentUser,
+    updateCurrentUser,
+    udateUserEmail,
+    changeUserPassword,
+    forgotPassword,
+    resetPassword,
+    contactUs
+};

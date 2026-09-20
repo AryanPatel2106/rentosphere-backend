@@ -3,6 +3,7 @@ import {
     registerUser,
     verifyEmail, 
     createUser,
+    directRegisterUser,
     loginUser,
     logoutUser,
     getCurrentUser,
@@ -19,6 +20,10 @@ const router = Router();
 
 router.route("/register").post(
     registerUser
+);
+
+router.route("/direct-register").post(
+    directRegisterUser
 );
 
 router.route("/contact-us").post(
