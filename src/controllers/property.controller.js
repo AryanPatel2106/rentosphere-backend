@@ -6,6 +6,7 @@ import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { getPlaceCoordinates, searchPlaceCoordinates } from "../services/location.service.js";
+import { generatePresignedUploadUrl, uploadDirectToS3 } from "../services/s3.service.js";
 
 
 const normalizeBhk = (val) => {
@@ -929,6 +930,48 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     );
 });
 
+const getUploadPresignedUrl = asyncHandler(async (req, res) => {
+    const { fileName, fileType } = req.body;
+
+    if (!fileName || !fileType) {
+        throw new ApiError(400, "fileName and fileType are required");
+    }
+
+    const allowedMimeTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/heic",
+        "image/heif"
+    ];
+
+    if (!allowedMimeTypes.includes(fileType.toLowerCase())) {
+        throw new ApiError(400, "Invalid file format. Only JPEG, PNG, WEBP, and HEIC images are allowed.");
+    }
+
+    const result = await generatePresignedUploadUrl({ fileName, fileType });
+
+    return res.status(200).json(
+        new ApiResponse(200, result, "Pre-signed S3 upload URL generated successfully")
+    );
+});
+
+const uploadImageDirect = asyncHandler(async (req, res) => {
+    if (!req.file) {
+        throw new ApiError(400, "No image file provided");
+    }
+
+    const result = await uploadDirectToS3({
+        buffer: req.file.buffer,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype
+    });
+
+    return res.status(200).json(
+        new ApiResponse(200, result, "Image uploaded to S3 successfully")
+    );
+});
 
 export {
     createProperty,
@@ -948,5 +991,7 @@ export {
     endLease,
     recordOfflinePayment,
     createRazorpayOrder,
-    verifyRazorpayPayment
+    verifyRazorpayPayment,
+    getUploadPresignedUrl,
+    uploadImageDirect
 };

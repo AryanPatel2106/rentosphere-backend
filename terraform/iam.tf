@@ -82,6 +82,34 @@ resource "aws_iam_role_policy" "ecs_task_ses" {
   })
 }
 
+resource "aws_iam_role_policy" "ecs_task_s3" {
+  name = "${var.project_name}-ecs-s3-media-policy"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject",
+          "s3:PutObjectAcl"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.media.arn
+      }
+    ]
+  })
+}
+
 # 3. CodeBuild Service Role for Backend
 resource "aws_iam_role" "codebuild_backend" {
   name = "codebuild-${var.project_name}-backend-build-service-role"

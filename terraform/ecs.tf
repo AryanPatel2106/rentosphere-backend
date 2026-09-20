@@ -64,6 +64,10 @@ resource "aws_ecs_task_definition" "backend" {
         {
           name  = "CLIENT_URL"
           value = "https://${var.frontend_subdomain}.${var.domain_name}"
+        },
+        {
+          name  = "MEDIA_S3_BUCKET"
+          value = aws_s3_bucket.media.bucket
         }
       ]
 

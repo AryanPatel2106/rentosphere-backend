@@ -18,10 +18,18 @@ import {
     endLease,
     recordOfflinePayment,
     createRazorpayOrder,
-    verifyRazorpayPayment
+    verifyRazorpayPayment,
+    getUploadPresignedUrl,
+    uploadImageDirect
 } from "../controllers/property.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
+import multer from "multer";
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 const router = Router();
 
@@ -54,5 +62,9 @@ router.put("/:propertyId/end-lease", verifyJWT, endLease);
 router.post("/rental-request/:requestId/record-payment", verifyJWT, recordOfflinePayment);
 router.post("/payment/create-order", verifyJWT, createRazorpayOrder);
 router.post("/payment/verify", verifyJWT, verifyRazorpayPayment);
+
+// Image Upload routes (S3)
+router.post("/upload-url", verifyJWT, getUploadPresignedUrl);
+router.post("/upload-image", verifyJWT, upload.single("image"), uploadImageDirect);
 
 export default router;
