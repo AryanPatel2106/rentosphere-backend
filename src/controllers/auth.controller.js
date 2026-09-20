@@ -3,8 +3,18 @@ import { User } from "../models/user.model.js";
 import { ApiResponse } from "../utils/api-response.js"
 import { ApiError } from "../utils/api-error.js"
 import { asyncHandler } from "../utils/async-handler.js"
-import { sendEmail, emailVerificationMailgenContent, forgotPasswordMailgenContent, contactUsSendEmail, contactUsMailgenContent } from "../utils/sendEmail.js"
-import crypto from "crypto"
+import {
+  sendEmail,
+  sendEmailSafe,
+  emailVerificationMailgenContent,
+  forgotPasswordMailgenContent,
+  contactUsSendEmail,
+  contactUsMailgenContent,
+  welcomeUserMailgenContent,
+  passwordChangedMailgenContent,
+  emailChangedMailgenContent,
+} from "../utils/sendEmail.js";
+import crypto from "crypto";
 
 const registerUser = asyncHandler(async (req, res) => {
     const { email } = req.body;
@@ -142,6 +152,12 @@ const createUser = asyncHandler(async (req, res) => {
     await newUser.save()
 
     await PendingVerification.deleteMany({ email: pendingVerification.email });
+
+    sendEmailSafe({
+        email: newUser.email,
+        subject: "Welcome to Rentosphere! 🎉 Your Account is Ready",
+        mailgenContent: welcomeUserMailgenContent(newUser.fullName || newUser.email.split("@")[0]),
+    });
 
     return res
         .status(201)
@@ -341,10 +357,27 @@ const udateUserEmail = asyncHandler(async (req, res) => {
     }
 
 
+    const oldEmail = user.email;
     user.email = email;
-    await user.save()
+    await user.save();
 
     await PendingVerification.deleteMany({ email: pendingVerification.email });
+
+    // Send security notification to new email
+    sendEmailSafe({
+        email: email,
+        subject: "Security Alert: Your Rentosphere Account Email Was Updated",
+        mailgenContent: emailChangedMailgenContent(user.fullName || email.split("@")[0], email),
+    });
+
+    // Also alert the old email address for security tracking
+    if (oldEmail && oldEmail !== email) {
+        sendEmailSafe({
+            email: oldEmail,
+            subject: "Security Alert: Your Rentosphere Account Email Was Updated",
+            mailgenContent: emailChangedMailgenContent(user.fullName || oldEmail.split("@")[0], email),
+        });
+    }
 
     return res
         .status(200)
@@ -381,7 +414,13 @@ const changeUserPassword = asyncHandler(async (req, res) => {
     }
 
     user.password = newPassword;
-    await user.save()
+    await user.save();
+
+    sendEmailSafe({
+        email: user.email,
+        subject: "Security Alert: Your Rentosphere Password Was Changed",
+        mailgenContent: passwordChangedMailgenContent(user.fullName || user.email.split("@")[0]),
+    });
 
     return res
         .status(200)
@@ -455,7 +494,13 @@ const resetPassword = asyncHandler(async (req, res) => {
     user.password = newPassword;
     user.passwordResetTokenHash = null;
     user.passwordResetTokenExpiry = null;
-    await user.save()
+    await user.save();
+
+    sendEmailSafe({
+        email: user.email,
+        subject: "Security Alert: Your Rentosphere Password Was Successfully Reset",
+        mailgenContent: passwordChangedMailgenContent(user.fullName || user.email.split("@")[0]),
+    });
 
     return res
         .status(200)

@@ -7,6 +7,16 @@ import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { getPlaceCoordinates, searchPlaceCoordinates } from "../services/location.service.js";
 import { generatePresignedUploadUrl, uploadDirectToS3 } from "../services/s3.service.js";
+import {
+  sendEmailSafe,
+  propertyPublishedMailgenContent,
+  newRentalApplicationMailgenContent,
+  rentalApplicationAcceptedMailgenContent,
+  rentalApplicationRejectedMailgenContent,
+  rentPaymentReceiptMailgenContent,
+  rentPaymentReceivedMailgenContent,
+  leaseEndedMailgenContent,
+} from "../utils/sendEmail.js";
 
 
 const normalizeBhk = (val) => {
@@ -106,6 +116,12 @@ const createProperty = asyncHandler(async (req, res) => {
         photos: Array.isArray(photos) ? photos : (photos ? [photos] : []),
         amenities: Array.isArray(amenities) ? amenities : [],
         description: description?.trim() || "No description provided",
+    });
+
+    sendEmailSafe({
+        email: user.email,
+        subject: `Listing Published: ${property.title} is Now Live on Rentosphere`,
+        mailgenContent: propertyPublishedMailgenContent(user.fullName || user.email.split("@")[0], property),
     });
 
     return res
@@ -636,7 +652,21 @@ const createRentalRequest = asyncHandler(async (req, res) => {
 
     const populated = await RentalRequest.findById(request._id)
         .populate("property")
+        .populate("owner", "fullName email mobileNumber")
         .populate("tenant", "fullName email mobileNumber");
+
+    if (populated?.owner?.email) {
+        sendEmailSafe({
+            email: populated.owner.email,
+            subject: `New Rental Application: ${populated.tenant?.fullName || "A prospective tenant"} applied for ${populated.property?.title}`,
+            mailgenContent: newRentalApplicationMailgenContent(
+                populated.owner.fullName || populated.owner.email.split("@")[0],
+                populated.property,
+                populated.tenant,
+                request
+            ),
+        });
+    }
 
     return res.status(201).json(
         new ApiResponse(201, populated, "Rental request submitted successfully")
@@ -685,6 +715,13 @@ const acceptRentalRequest = asyncHandler(async (req, res) => {
         currentTenant: request.tenant
     });
 
+    // Find other pending requests before declining them to notify those applicants
+    const otherPending = await RentalRequest.find({
+        property: request.property,
+        _id: { $ne: request._id },
+        status: "pending"
+    }).populate("tenant", "fullName email mobileNumber").populate("property", "title");
+
     // Automatically decline other pending requests for this property
     await RentalRequest.updateMany(
         {
@@ -697,7 +734,36 @@ const acceptRentalRequest = asyncHandler(async (req, res) => {
 
     const populated = await RentalRequest.findById(request._id)
         .populate("property")
+        .populate("owner", "fullName email mobileNumber")
         .populate("tenant", "fullName email mobileNumber");
+
+    // 1. Notify accepted tenant
+    if (populated?.tenant?.email) {
+        sendEmailSafe({
+            email: populated.tenant.email,
+            subject: `Congratulations! Your Rental Application for ${populated.property?.title} Was Accepted`,
+            mailgenContent: rentalApplicationAcceptedMailgenContent(
+                populated.tenant.fullName || populated.tenant.email.split("@")[0],
+                populated.property,
+                populated.owner,
+                populated
+            ),
+        });
+    }
+
+    // 2. Notify other applicants politely that property is booked
+    for (const rejectedReq of otherPending) {
+        if (rejectedReq.tenant?.email) {
+            sendEmailSafe({
+                email: rejectedReq.tenant.email,
+                subject: `Rental Application Update: ${rejectedReq.property?.title}`,
+                mailgenContent: rentalApplicationRejectedMailgenContent(
+                    rejectedReq.tenant.fullName || rejectedReq.tenant.email.split("@")[0],
+                    rejectedReq.property
+                ),
+            });
+        }
+    }
 
     return res.status(200).json(
         new ApiResponse(200, populated, "Rental request accepted. Property is now rented!")
@@ -717,6 +783,21 @@ const rejectRentalRequest = asyncHandler(async (req, res) => {
 
     request.status = "rejected";
     await request.save();
+
+    const populated = await RentalRequest.findById(request._id)
+        .populate("property", "title")
+        .populate("tenant", "fullName email mobileNumber");
+
+    if (populated?.tenant?.email) {
+        sendEmailSafe({
+            email: populated.tenant.email,
+            subject: `Rental Application Update: ${populated.property?.title}`,
+            mailgenContent: rentalApplicationRejectedMailgenContent(
+                populated.tenant.fullName || populated.tenant.email.split("@")[0],
+                populated.property
+            ),
+        });
+    }
 
     return res.status(200).json(
         new ApiResponse(200, request, "Rental request rejected")
@@ -767,6 +848,10 @@ const endLease = asyncHandler(async (req, res) => {
         throw new ApiError(403, "Not authorized to manage lease for this property");
     }
 
+    const previousTenantId = property.currentTenant;
+    const previousTenant = previousTenantId ? await User.findById(previousTenantId) : null;
+    const ownerUser = await User.findById(property.owner);
+
     // Set property status back to active so it appears in search again
     property.status = "active";
     property.currentTenant = null;
@@ -777,6 +862,32 @@ const endLease = asyncHandler(async (req, res) => {
         { property: propertyId, status: "accepted" },
         { status: "completed" }
     );
+
+    // Notify owner of lease conclusion & re-listing
+    if (ownerUser?.email) {
+        sendEmailSafe({
+            email: ownerUser.email,
+            subject: `Tenancy Concluded & Property Re-listed: ${property.title}`,
+            mailgenContent: leaseEndedMailgenContent(
+                ownerUser.fullName || ownerUser.email.split("@")[0],
+                property,
+                true
+            ),
+        });
+    }
+
+    // Notify tenant of lease conclusion
+    if (previousTenant?.email) {
+        sendEmailSafe({
+            email: previousTenant.email,
+            subject: `Lease Agreement Completed: ${property.title}`,
+            mailgenContent: leaseEndedMailgenContent(
+                previousTenant.fullName || previousTenant.email.split("@")[0],
+                property,
+                false
+            ),
+        });
+    }
 
     return res.status(200).json(
         new ApiResponse(200, property, "Lease ended successfully. Property is now active and re-listed!")
@@ -815,6 +926,39 @@ const recordOfflinePayment = asyncHandler(async (req, res) => {
 
     request.payments.push(newPayment);
     await request.save();
+
+    const populated = await RentalRequest.findById(request._id)
+        .populate("property", "title")
+        .populate("tenant", "fullName email mobileNumber")
+        .populate("owner", "fullName email mobileNumber");
+
+    // Send digital receipt to tenant
+    if (populated?.tenant?.email) {
+        sendEmailSafe({
+            email: populated.tenant.email,
+            subject: `Rent Payment Receipt: ₹${newPayment.amount.toLocaleString("en-IN")} for Month ${newPayment.month}/${newPayment.year} - Rentosphere`,
+            mailgenContent: rentPaymentReceiptMailgenContent(
+                populated.tenant.fullName || populated.tenant.email.split("@")[0],
+                populated.property,
+                newPayment,
+                populated.owner
+            ),
+        });
+    }
+
+    // Send payment confirmation to owner
+    if (populated?.owner?.email) {
+        sendEmailSafe({
+            email: populated.owner.email,
+            subject: `Rent Payment Recorded: ₹${newPayment.amount.toLocaleString("en-IN")} from ${populated.tenant?.fullName || "Tenant"} (${populated.property?.title})`,
+            mailgenContent: rentPaymentReceivedMailgenContent(
+                populated.owner.fullName || populated.owner.email.split("@")[0],
+                populated.property,
+                newPayment,
+                populated.tenant
+            ),
+        });
+    }
 
     return res.status(200).json(
         new ApiResponse(200, request, "Offline payment recorded successfully")
@@ -933,6 +1077,39 @@ const verifyRazorpayPayment = asyncHandler(async (req, res) => {
 
     request.payments.push(newPayment);
     await request.save();
+
+    const populated = await RentalRequest.findById(request._id)
+        .populate("property", "title")
+        .populate("tenant", "fullName email mobileNumber")
+        .populate("owner", "fullName email mobileNumber");
+
+    // Send instant digital receipt to tenant
+    if (populated?.tenant?.email) {
+        sendEmailSafe({
+            email: populated.tenant.email,
+            subject: `Rent Payment Receipt: ₹${newPayment.amount.toLocaleString("en-IN")} for Month ${newPayment.month}/${newPayment.year} - Rentosphere`,
+            mailgenContent: rentPaymentReceiptMailgenContent(
+                populated.tenant.fullName || populated.tenant.email.split("@")[0],
+                populated.property,
+                newPayment,
+                populated.owner
+            ),
+        });
+    }
+
+    // Send payment notification to owner
+    if (populated?.owner?.email) {
+        sendEmailSafe({
+            email: populated.owner.email,
+            subject: `Rent Payment Received: ₹${newPayment.amount.toLocaleString("en-IN")} from ${populated.tenant?.fullName || "Tenant"} (${populated.property?.title})`,
+            mailgenContent: rentPaymentReceivedMailgenContent(
+                populated.owner.fullName || populated.owner.email.split("@")[0],
+                populated.property,
+                newPayment,
+                populated.tenant
+            ),
+        });
+    }
 
     return res.status(200).json(
         new ApiResponse(200, request, "Payment processed and recorded successfully")
