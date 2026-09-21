@@ -138,6 +138,10 @@ resource "aws_ecs_service" "backend" {
     aws_lb_listener.https
   ]
 
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
   tags = {
     Name = "${var.project_name}-service"
   }
