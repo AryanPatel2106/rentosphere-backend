@@ -348,4 +348,45 @@ describe("Rentosphere Functional Test Suite", () => {
             assert.equal(body.data.searchStrategy, "heuristic_baseline");
         });
     });
+
+    describe("9. AI Semantic Search & Deal Score Valuation", () => {
+        it("POST /api/v1/property/ai-parse accurately extracts NLP filters, tags, and summary", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/ai-parse`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    prompt: "Find me a pet-friendly 2bhk in chennai under 25k with car parking and power backup"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.equal(body.data.filters.bhkType, "2 BHK");
+            assert.equal(body.data.filters.city, "Chennai");
+            assert.equal(body.data.filters.maxRent, "25000");
+            assert.equal(body.data.filters.petFriendly, true);
+            assert.equal(body.data.filters.parking, true);
+            assert.ok(Array.isArray(body.data.tags));
+            assert.ok(body.data.tags.length >= 4);
+            assert.ok(body.data.summary.includes("2 BHK"));
+        });
+
+        it("GET /api/v1/property/get-properties attaches deal valuation scores to all returned listings", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/get-properties?limit=5`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.ok(Array.isArray(body.data.properties));
+
+            if (body.data.properties.length > 0) {
+                const firstProp = body.data.properties[0];
+                assert.ok(firstProp.deal);
+                assert.ok(["Great Deal", "Fair Price", "Premium"].includes(firstProp.deal.dealType));
+                assert.ok(typeof firstProp.deal.marketRent === "number");
+                assert.ok(firstProp.deal.label);
+                assert.ok(firstProp.deal.summary);
+            }
+        });
+    });
 });

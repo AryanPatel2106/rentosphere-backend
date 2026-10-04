@@ -8,6 +8,8 @@ import { asyncHandler } from "../utils/async-handler.js";
 import { getPlaceCoordinates, searchPlaceCoordinates } from "../services/location.service.js";
 import { generatePresignedUploadUrl, uploadDirectToS3 } from "../services/s3.service.js";
 import { estimateRent } from "../services/rentEstimator.service.js";
+import { parseAiSearchQuery } from "../services/aiSearch.service.js";
+import { attachDealScores, calculateDealScore } from "../services/dealScore.service.js";
 import {
   sendEmailSafe,
   propertyPublishedMailgenContent,
@@ -355,7 +357,8 @@ const getProperties = asyncHandler(async (req, res) => {
         });
 
         const [results] = await Property.aggregate(pipeline);
-        const properties = results?.data || [];
+        const rawProperties = results?.data || [];
+        const properties = attachDealScores(rawProperties);
         const total = results?.metadata?.[0]?.total || 0;
         const hasMore = skip + properties.length < total;
 
@@ -397,7 +400,7 @@ const getProperties = asyncHandler(async (req, res) => {
     }
 
     // Run query and count in parallel using .lean() to bypass hydration overhead
-    const [properties, total] = await Promise.all([
+    const [rawProperties, total] = await Promise.all([
         Property.find(filterQuery)
             .select(projection)
             .sort(sortObj)
@@ -407,6 +410,7 @@ const getProperties = asyncHandler(async (req, res) => {
         Property.countDocuments(filterQuery)
     ]);
 
+    const properties = attachDealScores(rawProperties);
     const hasMore = skip + properties.length < total;
 
     return res.status(200).json(
@@ -441,8 +445,11 @@ const getPropertyById = asyncHandler(async (req, res) => {
         $inc: { views: 1 }
     });
 
+    const propertyObj = property.toObject();
+    propertyObj.deal = calculateDealScore(propertyObj);
+
     return res.status(200).json(
-        new ApiResponse(200, property, "Property fetched successfully")
+        new ApiResponse(200, propertyObj, "Property fetched successfully")
     );
 });
 
@@ -1184,6 +1191,15 @@ const estimateRentPrice = asyncHandler(async (req, res) => {
     );
 });
 
+const parseAiQuery = asyncHandler(async (req, res) => {
+    const { query, prompt, q } = { ...(req.query || {}), ...(req.body || {}) };
+    const searchPrompt = query || prompt || q || "";
+    const result = parseAiSearchQuery(searchPrompt);
+    return res.status(200).json(
+        new ApiResponse(200, result, "AI search query parsed successfully")
+    );
+});
+
 export {
     createProperty,
     getProperties,
@@ -1205,5 +1221,6 @@ export {
     verifyRazorpayPayment,
     getUploadPresignedUrl,
     uploadImageDirect,
-    estimateRentPrice
+    estimateRentPrice,
+    parseAiQuery
 };

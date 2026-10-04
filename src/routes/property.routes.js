@@ -21,7 +21,8 @@ import {
     verifyRazorpayPayment,
     getUploadPresignedUrl,
     uploadImageDirect,
-    estimateRentPrice
+    estimateRentPrice,
+    parseAiQuery
 } from "../controllers/property.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -38,6 +39,8 @@ const router = Router();
 router.get("/get-properties", getProperties);
 router.get("/property-info/:propertyId", getPropertyById);
 router.post("/estimate-rent", estimateRentPrice);
+router.post("/ai-parse", parseAiQuery);
+router.get("/ai-parse", parseAiQuery);
 
 // Protected routes
 router.post("/", verifyJWT, createProperty);
