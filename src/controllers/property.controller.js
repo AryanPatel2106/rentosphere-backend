@@ -1194,7 +1194,7 @@ const estimateRentPrice = asyncHandler(async (req, res) => {
 const parseAiQuery = asyncHandler(async (req, res) => {
     const { query, prompt, q } = { ...(req.query || {}), ...(req.body || {}) };
     const searchPrompt = query || prompt || q || "";
-    const result = parseAiSearchQuery(searchPrompt);
+    const result = await parseAiSearchQuery(searchPrompt);
     return res.status(200).json(
         new ApiResponse(200, result, "AI search query parsed successfully")
     );

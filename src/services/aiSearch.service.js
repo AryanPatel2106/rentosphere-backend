@@ -59,6 +59,244 @@ const AMENITY_MAP = {
   internet: "Wi-Fi"
 };
 
+const ALLOWED_AMENITIES = [
+  "Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security",
+  "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"
+];
+
+const SYSTEM_INSTRUCTIONS = `You are an expert real estate AI search query parser for "Rentosphere", an Indian rental housing platform.
+Analyze the user's conversational rental query and return a valid JSON object matching the platform filter schema.
+
+Return ONLY a JSON object with these fields (set field to null or omit if not requested by the user):
+{
+  "bhkType": "1 RK" | "1 BHK" | "2 BHK" | "3 BHK" | "4+ BHK" | null,
+  "city": string | null,
+  "locality": string | null,
+  "minRent": string numeric in INR (e.g. "15000") | null,
+  "maxRent": string numeric in INR (e.g. "25000") | null,
+  "propertyType": "Apartment" | "Independent House" | "Villa" | "Builder Floor" | null,
+  "furnishing": "Fully Furnished" | "Semi-Furnished" | "Unfurnished" | null,
+  "preferredTenant": "Bachelors" | "Family" | "Anyone" | "Company" | null,
+  "parking": boolean | null,
+  "petFriendly": boolean | null,
+  "amenities": array of strings from ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"],
+  "keyword": string (landmark, tech park, society name, or metro station) | null,
+  "tags": array of 2 to 5 short string badges for UI chips (e.g. ["2 BHK", "Max ₹25,000", "Velachery", "Pet Friendly"]),
+  "summary": string (clean natural language summary of search intent)
+}
+
+Important Domain Rules:
+- Indian currency shorthand: "25k" = "25000", "15 thousand" = "15000", "1.5 lakh" = "150000", "under 20k" -> maxRent: "20000", "between 15k and 25k" -> minRent: "15000", maxRent: "25000", "above 30k" -> minRent: "30000".
+- Indian rental types: "1bhk", "2bhk", "1rk", "studio" -> "1 RK", "single bedroom" -> "1 BHK".
+- Standardize propertyType: "flat" or "society" -> "Apartment", "independent house" -> "Independent House", "villa" -> "Villa".
+- Standardize preferredTenant: "bachelor" or "students" or "boys" or "girls" -> "Bachelors", "family" -> "Family".
+- Only include amenities from the allowed list.
+- Do not invent criteria the user did not state.`;
+
+/**
+ * Sanitizes and normalizes output from any parser (LLM or heuristic)
+ */
+function sanitizeParsedFilters(raw, originalPrompt) {
+  const filters = {};
+  const tags = Array.isArray(raw.tags) ? raw.tags.map(String).filter(Boolean) : [];
+
+  // BHK Type
+  if (raw.bhkType) {
+    const b = String(raw.bhkType).trim().toUpperCase();
+    if (b.includes("1 RK") || b.includes("1RK") || b.includes("STUDIO")) filters.bhkType = "1 RK";
+    else if (b.includes("1 BHK") || b.includes("1BHK")) filters.bhkType = "1 BHK";
+    else if (b.includes("2 BHK") || b.includes("2BHK")) filters.bhkType = "2 BHK";
+    else if (b.includes("3 BHK") || b.includes("3BHK")) filters.bhkType = "3 BHK";
+    else if (b.includes("4") || b.includes("4+")) filters.bhkType = "4+ BHK";
+  }
+
+  // City & Locality
+  if (raw.city && typeof raw.city === "string" && raw.city.trim()) {
+    filters.city = raw.city.trim().charAt(0).toUpperCase() + raw.city.trim().slice(1);
+    if (filters.city.toLowerCase() === "trichy") filters.city = "Tiruchirappalli";
+    if (filters.city.toLowerCase() === "bengaluru") filters.city = "Bangalore";
+  }
+
+  if (raw.locality && typeof raw.locality === "string" && raw.locality.trim()) {
+    filters.locality = raw.locality.trim().split(" ")
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  // Budget
+  if (raw.minRent !== undefined && raw.minRent !== null && String(raw.minRent).trim()) {
+    const minN = parseInt(String(raw.minRent).replace(/[^0-9]/g, ""), 10);
+    if (!isNaN(minN) && minN > 0) filters.minRent = String(minN);
+  }
+
+  if (raw.maxRent !== undefined && raw.maxRent !== null && String(raw.maxRent).trim()) {
+    const maxN = parseInt(String(raw.maxRent).replace(/[^0-9]/g, ""), 10);
+    if (!isNaN(maxN) && maxN > 0) filters.maxRent = String(maxN);
+  }
+
+  // Property Type
+  if (raw.propertyType) {
+    const pt = String(raw.propertyType).trim().toLowerCase();
+    if (pt.includes("villa")) filters.propertyType = "Villa";
+    else if (pt.includes("independent") || pt.includes("house")) filters.propertyType = "Independent House";
+    else if (pt.includes("builder") || pt.includes("floor")) filters.propertyType = "Builder Floor";
+    else if (pt.includes("apartment") || pt.includes("flat") || pt.includes("condo")) filters.propertyType = "Apartment";
+  }
+
+  // Furnishing
+  if (raw.furnishing) {
+    const f = String(raw.furnishing).trim().toLowerCase();
+    if (f.includes("fully") || f.includes("full")) filters.furnishing = "Fully Furnished";
+    else if (f.includes("semi")) filters.furnishing = "Semi-Furnished";
+    else if (f.includes("unfurn") || f.includes("empty") || f.includes("raw")) filters.furnishing = "Unfurnished";
+  }
+
+  // Preferred Tenant
+  if (raw.preferredTenant) {
+    const t = String(raw.preferredTenant).trim().toLowerCase();
+    if (t.includes("bachelor") || t.includes("student") || t.includes("boy") || t.includes("girl")) filters.preferredTenant = "Bachelors";
+    else if (t.includes("family")) filters.preferredTenant = "Family";
+    else if (t.includes("company")) filters.preferredTenant = "Company";
+    else if (t.includes("anyone") || t.includes("any")) filters.preferredTenant = "Anyone";
+  }
+
+  // Parking & Pet Friendly
+  if (raw.parking === true || raw.parking === "true") filters.parking = true;
+  if (raw.petFriendly === true || raw.petFriendly === "true") filters.petFriendly = true;
+
+  // Amenities
+  if (Array.isArray(raw.amenities)) {
+    const validAmenities = raw.amenities
+      .map(a => AMENITY_MAP[String(a).toLowerCase()] || a)
+      .filter(a => ALLOWED_AMENITIES.includes(a));
+    if (validAmenities.length > 0) {
+      filters.amenities = [...new Set(validAmenities)];
+    }
+  }
+
+  // Keyword / Landmark
+  if (raw.keyword && typeof raw.keyword === "string" && raw.keyword.trim()) {
+    filters.keyword = raw.keyword.trim();
+  }
+
+  // Build tags if not provided or empty
+  if (tags.length === 0) {
+    if (filters.bhkType) tags.push(filters.bhkType);
+    if (filters.locality) tags.push(filters.locality);
+    else if (filters.city) tags.push(filters.city);
+    if (filters.minRent && filters.maxRent) {
+      tags.push(`₹${Number(filters.minRent).toLocaleString("en-IN")} – ₹${Number(filters.maxRent).toLocaleString("en-IN")}`);
+    } else if (filters.maxRent) {
+      tags.push(`Max ₹${Number(filters.maxRent).toLocaleString("en-IN")}`);
+    } else if (filters.minRent) {
+      tags.push(`Min ₹${Number(filters.minRent).toLocaleString("en-IN")}`);
+    }
+    if (filters.furnishing) tags.push(filters.furnishing);
+    if (filters.preferredTenant) tags.push(`For ${filters.preferredTenant}`);
+    if (filters.parking) tags.push("Car Parking");
+    if (filters.petFriendly) tags.push("Pet Friendly");
+    if (filters.amenities) tags.push(...filters.amenities);
+  }
+
+  // Summary
+  let summary = raw.summary;
+  if (!summary || typeof summary !== "string" || !summary.trim()) {
+    summary = tags.length > 0
+      ? `Searching for ${tags.join(" • ")}`
+      : `Showing properties matching "${originalPrompt}"`;
+  }
+
+  return {
+    success: true,
+    originalPrompt,
+    filters,
+    tags,
+    summary
+  };
+}
+
+/**
+ * Call Google Gemini API (gemini-1.5-flash / gemini-2.0-flash) with structured JSON output
+ */
+async function parseWithGemini(prompt, apiKey) {
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: SYSTEM_INSTRUCTIONS },
+            { text: `Parse this rental query into JSON: "${prompt}"` }
+          ]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.1
+      }
+    }),
+    signal: AbortSignal.timeout(4000)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errorText.slice(0, 150)}`);
+  }
+
+  const json = await response.json();
+  const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawText) {
+    throw new Error("Empty response from Gemini API");
+  }
+
+  const parsedJson = JSON.parse(rawText);
+  return sanitizeParsedFilters(parsedJson, prompt);
+}
+
+/**
+ * Call OpenAI API (gpt-4o-mini) with JSON Object output
+ */
+async function parseWithOpenAI(prompt, apiKey) {
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const url = "https://api.openai.com/v1/chat/completions";
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTIONS },
+        { role: "user", content: `Parse this rental query into JSON: "${prompt}"` }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.1
+    }),
+    signal: AbortSignal.timeout(4000)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI API error (${response.status}): ${errorText.slice(0, 150)}`);
+  }
+
+  const json = await response.json();
+  const rawText = json.choices?.[0]?.message?.content;
+  if (!rawText) {
+    throw new Error("Empty response from OpenAI API");
+  }
+
+  const parsedJson = JSON.parse(rawText);
+  return sanitizeParsedFilters(parsedJson, prompt);
+}
+
 /**
  * Parses numeric currency strings with k/lakh/thousand suffixes into integer rupees.
  */
@@ -79,11 +317,9 @@ function parseCurrencyString(rawStr) {
 }
 
 /**
- * Main AI semantic query parser.
- * @param {string} prompt - Raw conversational query from the user.
- * @returns {object} Structured filter params and user-facing explanation.
+ * Local heuristic parser (fallback when LLM key is absent or network fails)
  */
-export function parseAiSearchQuery(prompt) {
+function parseWithLocalHeuristics(prompt) {
   if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
     return {
       success: true,
@@ -298,3 +534,55 @@ export function parseAiSearchQuery(prompt) {
     summary
   };
 }
+
+/**
+ * Main AI semantic query parser entry point.
+ * Selects Gemini API -> OpenAI API -> Local Heuristic fallback.
+ * @param {string} prompt - Raw conversational query from user.
+ * @returns {Promise<object>} Structured filter parameters and UI metadata.
+ */
+export async function parseAiSearchQuery(prompt) {
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    return {
+      success: true,
+      originalPrompt: "",
+      filters: {},
+      tags: [],
+      summary: "Showing all available properties.",
+      provider: "none"
+    };
+  }
+
+  const cleanPrompt = prompt.trim();
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+
+  // 1. Google Gemini API (if key is set)
+  if (geminiKey) {
+    try {
+      const result = await parseWithGemini(cleanPrompt, geminiKey);
+      if (result && result.success) {
+        return { ...result, provider: "gemini" };
+      }
+    } catch (err) {
+      console.warn(`[SmartSearch] Gemini parsing failed (${err.message}). Falling back to heuristic parser.`);
+    }
+  }
+
+  // 2. OpenAI API (if key is set)
+  if (openaiKey) {
+    try {
+      const result = await parseWithOpenAI(cleanPrompt, openaiKey);
+      if (result && result.success) {
+        return { ...result, provider: "openai" };
+      }
+    } catch (err) {
+      console.warn(`[SmartSearch] OpenAI parsing failed (${err.message}). Falling back to heuristic parser.`);
+    }
+  }
+
+  // 3. Resilient Local Heuristic Parser Fallback
+  const fallback = parseWithLocalHeuristics(cleanPrompt);
+  return { ...fallback, provider: "local-heuristic" };
+}
+
