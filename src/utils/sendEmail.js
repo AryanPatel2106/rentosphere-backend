@@ -37,7 +37,7 @@ const sendEmail = async (options) => {
     },
   });
 
-  const fromEmail = process.env.SES_FROM_EMAIL || "aryanpatel8082@gmail.com";
+  const fromEmail = process.env.SES_FROM_EMAIL || "noreply@clouddrive.page";
 
   const emailTextual = mailGenerator.generatePlaintext(options.mailgenContent);
   const emailHtml = mailGenerator.generate(options.mailgenContent);
@@ -96,7 +96,7 @@ const contactUsSendEmail = async (options) => {
     },
   });
 
-  const fromEmail = process.env.SES_FROM_EMAIL || "aryanpatel8082@gmail.com";
+  const fromEmail = process.env.SES_FROM_EMAIL || "noreply@clouddrive.page";
   const toEmail = process.env.SES_CONTACT_US_EMAIL || "aryanpatel80822@gmail.com";
 
   const emailTextual = mailGenerator.generatePlaintext(options.mailgenContent);
