@@ -363,14 +363,14 @@ describe("Rentosphere Functional Test Suite", () => {
             const body = await res.json();
             assert.equal(body.statusCode, 200);
             assert.ok(body.data);
-            assert.equal(body.data.filters.bhkType, "2 BHK");
+            assert.ok(["2BHK", "2 BHK"].includes(body.data.filters.bhkType));
             assert.equal(body.data.filters.city, "Chennai");
             assert.equal(body.data.filters.maxRent, "25000");
             assert.equal(body.data.filters.petFriendly, true);
             assert.equal(body.data.filters.parking, true);
             assert.ok(Array.isArray(body.data.tags));
             assert.ok(body.data.tags.length >= 4);
-            assert.ok(body.data.summary.includes("2 BHK"));
+            assert.ok(body.data.summary.toLowerCase().includes("2bhk") || body.data.summary.toLowerCase().includes("2 bhk"));
         });
 
         it("GET /api/v1/property/get-properties attaches deal valuation scores to all returned listings", async () => {
@@ -387,6 +387,45 @@ describe("Rentosphere Functional Test Suite", () => {
                 assert.ok(firstProp.deal.label);
                 assert.ok(firstProp.deal.summary);
             }
+        });
+    });
+
+    describe("10. AI Chatbot Assistant ('RentoBot')", () => {
+        it("POST /api/v1/chatbot/message returns structured response with reply and actions", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "What is the zero brokerage policy on Rentosphere?"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.ok(typeof body.data.reply === "string");
+            assert.ok(body.data.reply.length > 20);
+            assert.ok(Array.isArray(body.data.suggestedActions));
+            assert.ok(Array.isArray(body.data.quickReplies));
+            assert.ok(["gemini", "domain-knowledge"].includes(body.data.provider));
+        });
+
+        it("POST /api/v1/chatbot/message supports search recommendation actions", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "Find 2BHK in Velachery under 30k"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data.reply);
+            assert.ok(Array.isArray(body.data.suggestedActions));
+            assert.ok(body.data.suggestedActions.some((a) => a.url && a.url.includes("/search")));
         });
     });
 });

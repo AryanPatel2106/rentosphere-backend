@@ -149,6 +149,7 @@ const getProperties = asyncHandler(async (req, res) => {
         place,
         query,
         q,
+        locality,
         lat,
         lng,
         latitude,
@@ -166,6 +167,7 @@ const getProperties = asyncHandler(async (req, res) => {
         maxRent,
         parking,
         petFriendly,
+        amenities,
         sortBy
     } = req.query;
 
@@ -264,6 +266,18 @@ const getProperties = asyncHandler(async (req, res) => {
         filterQuery.PetFriendly = petFriendly === "true" || petFriendly === true;
     }
 
+    // Amenities filter
+    if (amenities) {
+        const amenArr = (Array.isArray(amenities) ? amenities : amenities.split(","))
+            .map((a) => a.trim())
+            .filter(Boolean);
+        if (amenArr.length > 0) {
+            filterQuery.amenities = {
+                $all: amenArr.map((a) => new RegExp(a, "i"))
+            };
+        }
+    }
+
     // ── Location Resolution ───────────────────────────────────────────────────
     let searchCoordinates = null;
 
@@ -280,7 +294,7 @@ const getProperties = asyncHandler(async (req, res) => {
         searchCoordinates = await getPlaceCoordinates(placeId);
     }
 
-    const searchText = place || query || q;
+    const searchText = place || query || q || locality;
     if (!searchCoordinates && searchText) {
         searchCoordinates = await searchPlaceCoordinates(searchText);
     }
@@ -325,6 +339,7 @@ const getProperties = asyncHandler(async (req, res) => {
                     },
                     distanceField: "distance",
                     spherical: true,
+                    maxDistance: 25000,
                     query: filterQuery
                 }
             }
@@ -379,15 +394,23 @@ const getProperties = asyncHandler(async (req, res) => {
     }
 
     // ── 2. Standard Search without Coordinates ────────────────────────────────
-    if (!filterQuery.$or && searchText && searchText.trim()) {
+    if (searchText && searchText.trim()) {
         const regex = new RegExp(searchText.trim(), "i");
-        filterQuery.$or = [
-            { title: { $regex: regex } },
-            { description: { $regex: regex } },
-            { "locality.label": { $regex: regex } },
-            { "locality.text": { $regex: regex } },
-            { "locality.city": { $regex: regex } }
-        ];
+        const locCondition = {
+            $or: [
+                { title: { $regex: regex } },
+                { description: { $regex: regex } },
+                { "locality.label": { $regex: regex } },
+                { "locality.text": { $regex: regex } },
+                { "locality.city": { $regex: regex } }
+            ]
+        };
+        if (filterQuery.$or) {
+            filterQuery.$and = [{ $or: filterQuery.$or }, locCondition];
+            delete filterQuery.$or;
+        } else {
+            filterQuery.$or = locCondition.$or;
+        }
     }
 
     let sortObj = { createdAt: -1 };

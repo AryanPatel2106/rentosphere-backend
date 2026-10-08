@@ -62,10 +62,12 @@ app.get("/health", (req, res) => {
 import authRoutes from "./routes/auth.routes.js";
 import locationRouter from "./routes/location.routes.js";
 import propertyRouter from "./routes/property.routes.js";
+import chatbotRouter from "./routes/chatbot.routes.js";
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/location", locationRouter);
 app.use("/api/v1/property", propertyRouter);
+app.use("/api/v1/chatbot", chatbotRouter);
 
 // Global centralized error handler
 app.use((err, req, res, next) => {

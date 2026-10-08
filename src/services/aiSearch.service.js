@@ -69,7 +69,7 @@ Analyze the user's conversational rental query and return a valid JSON object ma
 
 Return ONLY a JSON object with these fields (set field to null or omit if not requested by the user):
 {
-  "bhkType": "1 RK" | "1 BHK" | "2 BHK" | "3 BHK" | "4+ BHK" | null,
+  "bhkType": "1RK" | "1BHK" | "2BHK" | "3BHK" | "4BHK" | "5BHK+" | null,
   "city": string | null,
   "locality": string | null,
   "minRent": string numeric in INR (e.g. "15000") | null,
@@ -81,16 +81,19 @@ Return ONLY a JSON object with these fields (set field to null or omit if not re
   "petFriendly": boolean | null,
   "amenities": array of strings from ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"],
   "keyword": string (landmark, tech park, society name, or metro station) | null,
-  "tags": array of 2 to 5 short string badges for UI chips (e.g. ["2 BHK", "Max ₹25,000", "Velachery", "Pet Friendly"]),
+  "sortBy": "nearest" | "rent_asc" | "rent_desc" | "newest" | null,
+  "tags": array of 2 to 5 short string badges for UI chips (e.g. ["2BHK", "Max ₹25,000", "Velachery", "Pet Friendly"]),
   "summary": string (clean natural language summary of search intent)
 }
 
 Important Domain Rules:
 - Indian currency shorthand: "25k" = "25000", "15 thousand" = "15000", "1.5 lakh" = "150000", "under 20k" -> maxRent: "20000", "between 15k and 25k" -> minRent: "15000", maxRent: "25000", "above 30k" -> minRent: "30000".
-- Indian rental types: "1bhk", "2bhk", "1rk", "studio" -> "1 RK", "single bedroom" -> "1 BHK".
-- Standardize propertyType: "flat" or "society" -> "Apartment", "independent house" -> "Independent House", "villa" -> "Villa".
-- Standardize preferredTenant: "bachelor" or "students" or "boys" or "girls" -> "Bachelors", "family" -> "Family".
-- Only include amenities from the allowed list.
+- BHK configurations (NO SPACES in output): "1rk" / "studio" -> "1RK", "1bhk" / "single bedroom" -> "1BHK", "2bhk" -> "2BHK", "3bhk" -> "3BHK", "4bhk" -> "4BHK", "5bhk" -> "5BHK+".
+- Sorting intent: If user asks for "cheapest", "lowest rent", "affordable", "budget", "low price" -> set sortBy to "rent_asc". If user asks for "luxury", "most expensive", "high end", "premium" -> set sortBy to "rent_desc". If user asks for "latest", "recent", "newest" -> set sortBy to "newest". Otherwise null.
+- Standardize propertyType: "flat" or "society" -> "Apartment", "independent house" -> "Independent House", "villa" -> "Villa", "builder floor" -> "Builder Floor".
+- Standardize preferredTenant: "bachelor" or "students" or "boys" or "girls" -> "Bachelors", "family" -> "Family", "company" / "corporate" -> "Company".
+- Only include amenities from the allowed list: ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"].
+- Keyword: Landmarks, specific localities or IT parks not covered by locality/city (e.g., "near DLF", "Tidel park", "near metro", "sea view", "lake view").
 - Do not invent criteria the user did not state.`;
 
 /**
@@ -100,14 +103,23 @@ function sanitizeParsedFilters(raw, originalPrompt) {
   const filters = {};
   const tags = Array.isArray(raw.tags) ? raw.tags.map(String).filter(Boolean) : [];
 
-  // BHK Type
+  // BHK Type (strictly normalized without spaces e.g. "2BHK")
   if (raw.bhkType) {
-    const b = String(raw.bhkType).trim().toUpperCase();
-    if (b.includes("1 RK") || b.includes("1RK") || b.includes("STUDIO")) filters.bhkType = "1 RK";
-    else if (b.includes("1 BHK") || b.includes("1BHK")) filters.bhkType = "1 BHK";
-    else if (b.includes("2 BHK") || b.includes("2BHK")) filters.bhkType = "2 BHK";
-    else if (b.includes("3 BHK") || b.includes("3BHK")) filters.bhkType = "3 BHK";
-    else if (b.includes("4") || b.includes("4+")) filters.bhkType = "4+ BHK";
+    const b = String(raw.bhkType).trim().toUpperCase().replace(/\s+/g, "");
+    if (b.includes("1RK") || b.includes("STUDIO")) filters.bhkType = "1RK";
+    else if (b.includes("1BHK") || b.includes("1BED")) filters.bhkType = "1BHK";
+    else if (b.includes("2BHK") || b.includes("2BED")) filters.bhkType = "2BHK";
+    else if (b.includes("3BHK") || b.includes("3BED")) filters.bhkType = "3BHK";
+    else if (b.includes("4BHK") || b.includes("4BED")) filters.bhkType = "4BHK";
+    else if (b.includes("5BHK") || b.includes("5+")) filters.bhkType = "5BHK+";
+  }
+
+  // Sort Preference
+  if (raw.sortBy) {
+    const s = String(raw.sortBy).trim().toLowerCase();
+    if (["rent_asc", "rent_desc", "newest", "nearest"].includes(s)) {
+      filters.sortBy = s;
+    }
   }
 
   // City & Locality
@@ -216,45 +228,59 @@ function sanitizeParsedFilters(raw, originalPrompt) {
 }
 
 /**
- * Call Google Gemini API (gemini-1.5-flash / gemini-2.0-flash) with structured JSON output
+ * Call Google Gemini API with structured JSON output and automatic model failover
  */
 async function parseWithGemini(prompt, apiKey) {
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const candidateModels = process.env.GEMINI_MODEL
+    ? [process.env.GEMINI_MODEL]
+    : ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite"];
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: SYSTEM_INSTRUCTIONS },
-            { text: `Parse this rental query into JSON: "${prompt}"` }
-          ]
-        }
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1
+  let lastError = null;
+  for (const model of candidateModels) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: SYSTEM_INSTRUCTIONS },
+                { text: `Parse this rental query into JSON: "${prompt}"` }
+              ]
+            }
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1
+          }
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini API error (${response.status}) on ${model}: ${errorText.slice(0, 150)}`);
       }
-    }),
-    signal: AbortSignal.timeout(4000)
-  });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${errorText.slice(0, 150)}`);
+      const json = await response.json();
+      const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) {
+        throw new Error(`Empty response from Gemini model ${model}`);
+      }
+
+      const parsedJson = JSON.parse(rawText);
+      return sanitizeParsedFilters(parsedJson, prompt);
+    } catch (err) {
+      lastError = err;
+      // Try next candidate model if 503/404
+      continue;
+    }
   }
 
-  const json = await response.json();
-  const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error("Empty response from Gemini API");
-  }
-
-  const parsedJson = JSON.parse(rawText);
-  return sanitizeParsedFilters(parsedJson, prompt);
+  throw lastError || new Error("All Gemini models failed");
 }
 
 /**
@@ -334,16 +360,16 @@ function parseWithLocalHeuristics(prompt) {
   const tags = [];
 
   // 1. BHK Type Extraction
-  const bhkMatch = text.match(/\b([1-4])\s*(?:\+|\s*plus)?\s*(?:bhk|bedroom|bed|b\.h\.k)\b/i) ||
+  const bhkMatch = text.match(/\b([1-5])\s*(?:\+|\s*plus)?\s*(?:bhk|bedroom|bed|b\.h\.k)\b/i) ||
                    text.match(/\b(1\s*rk|studio)\b/i);
   if (bhkMatch) {
     const val = bhkMatch[1].toLowerCase();
     if (val.includes("rk") || val.includes("studio")) {
-      filters.bhkType = "1 RK";
-      tags.push("1 RK");
+      filters.bhkType = "1RK";
+      tags.push("1RK");
     } else {
       const num = parseInt(val, 10);
-      filters.bhkType = num >= 4 ? "4+ BHK" : `${num} BHK`;
+      filters.bhkType = num >= 5 ? "5BHK+" : `${num}BHK`;
       tags.push(filters.bhkType);
     }
     text = text.replace(bhkMatch[0], " ");
@@ -503,7 +529,22 @@ function parseWithLocalHeuristics(prompt) {
     filters.amenities = detectedAmenities;
   }
 
-  // 8. Residual Keyword Extraction (Society, Landmark, Project Name)
+  // 8. Sorting Intent Extraction
+  if (/\b(?:cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly)\b/i.test(text)) {
+    filters.sortBy = "rent_asc";
+    tags.push("Lowest Price");
+    text = text.replace(/\b(?:cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly)\b/gi, " ");
+  } else if (/\b(?:luxury|premium|most expensive|high end|high to low)\b/i.test(text)) {
+    filters.sortBy = "rent_desc";
+    tags.push("Premium");
+    text = text.replace(/\b(?:luxury|premium|most expensive|high end|high to low)\b/gi, " ");
+  } else if (/\b(?:newest|newly added|recent|latest|fresh)\b/i.test(text)) {
+    filters.sortBy = "newest";
+    tags.push("Newest First");
+    text = text.replace(/\b(?:newest|newly added|recent|latest|fresh)\b/gi, " ");
+  }
+
+  // 9. Residual Keyword Extraction (Society, Landmark, Project Name)
   const stopWords = new Set([
     "find", "me", "a", "an", "the", "in", "near", "with", "and", "or", "for",
     "i", "want", "need", "looking", "search", "show", "get", "please", "can",
