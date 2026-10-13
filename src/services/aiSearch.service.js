@@ -483,7 +483,10 @@ async function parseWithOpenAI(prompt, apiKey) {
  */
 function parseCurrencyString(rawStr) {
   if (!rawStr) return null;
-  const cleaned = rawStr.toLowerCase().replace(/[,\s₹rs]/g, "");
+  const cleaned = rawStr
+    .toLowerCase()
+    .replace(/(?:₹|inr|rs\.?)/gi, "")
+    .replace(/[,\s]/g, "");
 
   if (cleaned.endsWith("k") || cleaned.endsWith("grand")) {
     const num = parseFloat(cleaned.replace(/(k|grand)/, ""));
@@ -568,10 +571,10 @@ function parseWithLocalHeuristics(prompt) {
   if (!filters.maxRent) {
     const maxMatch =
       text.match(
-        /(?:under|below|less than|max|upto|up to|within|budget of|<|<=|tak|ke andar|se kam)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)/i
+        /([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand))\s*(?:tak|ke andar|se kam|me|mein)/i
       ) ||
       text.match(
-        /([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand))\s*(?:tak|ke andar|se kam|me|mein)/i
+        /(?:under|below|less than|max|upto|up to|within|budget of|<|<=|tak|ke andar|se kam)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)/i
       );
     if (maxMatch) {
       const maxVal = parseCurrencyString(maxMatch[1]);

@@ -10,6 +10,7 @@ import { generatePresignedUploadUrl, uploadDirectToS3 } from "../services/s3.ser
 import { estimateRent } from "../services/rentEstimator.service.js";
 import { parseAiSearchQuery } from "../services/aiSearch.service.js";
 import { attachDealScores, calculateDealScore } from "../services/dealScore.service.js";
+import { analyzePropertyPhoto } from "../services/rekognition.service.js";
 import {
   sendEmailSafe,
   propertyPublishedMailgenContent,
@@ -1228,6 +1229,18 @@ const parseAiQuery = asyncHandler(async (req, res) => {
     );
 });
 
+const analyzePhoto = asyncHandler(async (req, res) => {
+    const { photoUrl, photoKey } = req.body || {};
+    const target = photoUrl || photoKey;
+    if (!target) {
+        throw new ApiError(400, "photoUrl or photoKey is required");
+    }
+    const result = await analyzePropertyPhoto(target);
+    return res.status(200).json(
+        new ApiResponse(200, result, "Photo analyzed successfully")
+    );
+});
+
 export {
     createProperty,
     getProperties,
@@ -1250,5 +1263,6 @@ export {
     getUploadPresignedUrl,
     uploadImageDirect,
     estimateRentPrice,
-    parseAiQuery
+    parseAiQuery,
+    analyzePhoto
 };

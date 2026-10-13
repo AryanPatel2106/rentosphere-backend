@@ -22,7 +22,8 @@ import {
     getUploadPresignedUrl,
     uploadImageDirect,
     estimateRentPrice,
-    parseAiQuery
+    parseAiQuery,
+    analyzePhoto
 } from "../controllers/property.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -68,8 +69,9 @@ router.post("/rental-request/:requestId/record-payment", verifyJWT, recordOfflin
 router.post("/payment/create-order", verifyJWT, createRazorpayOrder);
 router.post("/payment/verify", verifyJWT, verifyRazorpayPayment);
 
-// Image Upload routes (S3)
+// Image Upload & AI Rekognition routes (S3 + Rekognition)
 router.post("/upload-url", verifyJWT, getUploadPresignedUrl);
 router.post("/upload-image", verifyJWT, upload.single("image"), uploadImageDirect);
+router.post("/analyze-photo", verifyJWT, analyzePhoto);
 
 export default router;

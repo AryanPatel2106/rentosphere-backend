@@ -596,4 +596,57 @@ describe("Rentosphere Functional Test Suite", () => {
             assert.ok(hasMap, "Search links should specify view=map");
         });
     });
+
+    describe("11. AWS AI Services (Rekognition & Polly)", () => {
+        it("POST /api/v1/property/analyze-photo requires JWT auth guard", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/analyze-photo`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    photoUrl: "https://rentosphere-media.s3.ap-south-1.amazonaws.com/properties/sample-kitchen.jpg"
+                })
+            });
+
+            assert.equal(res.status, 401);
+            const body = await res.json();
+            assert.equal(body.statusCode, 401);
+        });
+
+        it("POST /api/v1/chatbot/speak synthesizes speech audio or returns structured speech fallback", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/speak`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    text: "Hello! Welcome to Rentosphere. Find your perfect home with zero brokerage."
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.ok(body.data.provider);
+            // Returns either audioBase64 from AWS Polly or fallback text for client Web Speech API
+            if (body.data.audioBase64) {
+                assert.ok(body.data.contentType.includes("audio/"));
+                assert.ok(body.data.audioBase64.length > 50);
+            } else {
+                assert.ok(body.data.speechChunk);
+                assert.equal(body.data.provider, "client-fallback");
+            }
+        });
+
+        it("POST /api/v1/chatbot/speak rejects empty text payload with 400", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/speak`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: "   " })
+            });
+
+            assert.equal(res.status, 400);
+            const body = await res.json();
+            assert.equal(body.statusCode, 400);
+        });
+    });
 });
+
