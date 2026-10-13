@@ -166,7 +166,10 @@ const getProperties = asyncHandler(async (req, res) => {
         minRent,
         maxRent,
         parking,
+        isParking,
         petFriendly,
+        isPetFriendly,
+        PetFriendly,
         amenities,
         sortBy
     } = req.query;
@@ -257,13 +260,15 @@ const getProperties = asyncHandler(async (req, res) => {
     }
 
     // Parking filter
-    if (parking !== undefined && parking !== "") {
-        filterQuery.Parking = parking === "true" || parking === true;
+    const activeParking = parking !== undefined ? parking : isParking;
+    if (activeParking !== undefined && activeParking !== "") {
+        filterQuery.Parking = activeParking === "true" || activeParking === true;
     }
 
-    // Pet Friendly filter
-    if (petFriendly !== undefined && petFriendly !== "") {
-        filterQuery.PetFriendly = petFriendly === "true" || petFriendly === true;
+    // Pet Friendly filter (supports petFriendly, isPetFriendly, PetFriendly)
+    const activePetFriendly = petFriendly !== undefined ? petFriendly : (isPetFriendly !== undefined ? isPetFriendly : PetFriendly);
+    if (activePetFriendly !== undefined && activePetFriendly !== "") {
+        filterQuery.PetFriendly = activePetFriendly === "true" || activePetFriendly === true;
     }
 
     // Amenities filter

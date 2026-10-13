@@ -373,6 +373,62 @@ describe("Rentosphere Functional Test Suite", () => {
             assert.ok(body.data.summary.toLowerCase().includes("2bhk") || body.data.summary.toLowerCase().includes("2 bhk"));
         });
 
+        it("POST /api/v1/property/ai-parse accurately understands Hinglish queries and currency shorthands", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/ai-parse`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    prompt: "velachery me sasta 2bhk chahiye 25 hazar tak"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.equal(body.data.filters.bhkType, "2BHK");
+            assert.equal(body.data.filters.locality, "Velachery");
+            assert.equal(body.data.filters.maxRent, "25000");
+            assert.equal(body.data.filters.sortBy, "rent_asc");
+        });
+
+        it("POST /api/v1/property/ai-parse handles typo in locality ('velchery')", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/ai-parse`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    prompt: "1bhk flat in velchery under 15k"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.equal(body.data.filters.bhkType, "1BHK");
+            assert.equal(body.data.filters.locality, "Velachery");
+            assert.equal(body.data.filters.maxRent, "15000");
+        });
+
+        it("POST /api/v1/property/ai-parse accurately recognizes availability, pets, propertyType and sort from complex human prompt", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/property/ai-parse`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    prompt: "hey please find me a house with low range price and which is imidiately available. also it should allow pets to stay"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.equal(body.data.filters.propertyType, "Independent House");
+            assert.equal(body.data.filters.sortBy, "rent_asc");
+            assert.equal(body.data.filters.availability, "Immediate");
+            assert.equal(body.data.filters.petFriendly, true);
+        });
+
         it("GET /api/v1/property/get-properties attaches deal valuation scores to all returned listings", async () => {
             const res = await fetch(`${baseUrl}/api/v1/property/get-properties?limit=5`);
             assert.equal(res.status, 200);
@@ -426,6 +482,118 @@ describe("Rentosphere Functional Test Suite", () => {
             assert.ok(body.data.reply);
             assert.ok(Array.isArray(body.data.suggestedActions));
             assert.ok(body.data.suggestedActions.some((a) => a.url && a.url.includes("/search")));
+        });
+
+        it("POST /api/v1/chatbot/message understands Hinglish questions and generates search links", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "velachery me 2bhk flat chahiye 25 hazar ke andar"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data.reply);
+            assert.ok(Array.isArray(body.data.suggestedActions));
+            assert.ok(
+                body.data.suggestedActions.some(
+                    (a) => a.url && a.url.includes("/search") && (a.url.includes("Velachery") || a.url.includes("2BHK"))
+                )
+            );
+        });
+
+        it("POST /api/v1/chatbot/message answers brokerage questions asked in Hindi/Hinglish", async () => {
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "kya yahan koi brokerage ya commission lagti hai?"
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data.reply);
+            assert.ok(
+                body.data.reply.toLowerCase().includes("zero brokerage") ||
+                body.data.reply.toLowerCase().includes("brokerage")
+            );
+        });
+
+        it("POST /api/v1/chatbot/message normalizes link parameters and accumulates multi-turn filters", async () => {
+            const history = [
+                { role: "user", content: "hey please find me a house with low range price and which is imidiately available. also it should allow pets to stay" },
+                { role: "assistant", content: "I would be happy to help you find a pet-friendly home! Which city?" },
+                { role: "user", content: "in chennai" },
+                { role: "assistant", content: "Awesome! Chennai has pet-friendly homes." }
+            ];
+
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "give common link for all the above features",
+                    history
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.ok(body.data.reply);
+            assert.ok(Array.isArray(body.data.suggestedActions));
+
+            // Any generated action URLs must NOT contain hostname, must use petFriendly (not isPetFriendly)
+            for (const action of body.data.suggestedActions) {
+                if (action.url && action.url.startsWith("/")) {
+                    assert.ok(!action.url.includes("http://localhost"));
+                    assert.ok(!action.url.includes("isPetFriendly"));
+                }
+            }
+
+            // In-text markdown links must not have isPetFriendly
+            assert.ok(!body.data.reply.includes("isPetFriendly"));
+        });
+
+        it("POST /api/v1/chatbot/message handles budget range, parking, and map view requests", async () => {
+            const history = [
+                { role: "user", content: "1 to 10000 and parking should be availabe" },
+                { role: "assistant", content: "I have updated your search for budget homes with parking." },
+                { role: "user", content: "bro also add the parking filter to it plese" },
+                { role: "assistant", content: "Updated search with parking filter." }
+            ];
+
+            const res = await fetch(`${baseUrl}/api/v1/chatbot/message`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: "open it in map",
+                    history
+                })
+            });
+
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.statusCode, 200);
+            assert.ok(body.data);
+            assert.ok(body.data.reply);
+
+            // Verify that either suggestedActions or markdown links contain parking and view=map
+            const allUrls = [
+                ...(body.data.suggestedActions || []).map(a => a.url),
+                ...Array.from(body.data.reply.matchAll(/\[.*?\]\((.*?)\)/g)).map(m => m[1])
+            ];
+
+            const hasParking = allUrls.some(u => u && u.includes("parking=true"));
+            const hasMap = allUrls.some(u => u && (u.includes("view=map") || u.includes("viewMode=map")));
+
+            assert.ok(hasParking, "Search links should retain parking=true");
+            assert.ok(hasMap, "Search links should specify view=map");
         });
     });
 });

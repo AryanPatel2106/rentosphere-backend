@@ -64,8 +64,82 @@ const ALLOWED_AMENITIES = [
   "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"
 ];
 
-const SYSTEM_INSTRUCTIONS = `You are an expert real estate AI search query parser for "Rentosphere", an Indian rental housing platform.
-Analyze the user's conversational rental query and return a valid JSON object matching the platform filter schema.
+const LOCALITY_TYPO_MAP = {
+  velchery: "Velachery",
+  velacherry: "Velachery",
+  velachary: "Velachery",
+  velachery: "Velachery",
+  adyar: "Adyar",
+  adyaar: "Adyar",
+  anagar: "Anna Nagar",
+  annanagar: "Anna Nagar",
+  "anna ngr": "Anna Nagar",
+  tnagar: "T. Nagar",
+  "t nagar": "T. Nagar",
+  "t.nagar": "T. Nagar",
+  "t-nagar": "T. Nagar",
+  shollinganallur: "Sholinganallur",
+  solinganallur: "Sholinganallur",
+  sholinganallur: "Sholinganallur",
+  poroor: "Porur",
+  porur: "Porur",
+  perungudi: "Perungudi",
+  perungudy: "Perungudi",
+  thoraipakkam: "Thoraipakkam",
+  thuraipakkam: "Thoraipakkam",
+  toraipakkam: "Thoraipakkam",
+  koramangala: "Koramangala",
+  koramangla: "Koramangala",
+  indiranagar: "Indiranagar",
+  indranagar: "Indiranagar",
+  whitefield: "Whitefield",
+  "white field": "Whitefield",
+  hsr: "HSR Layout",
+  "hsr layout": "HSR Layout",
+  omr: "OMR",
+  "omr road": "OMR",
+  guindy: "Guindy",
+  mylapore: "Mylapore",
+  nungambakkam: "Nungambakkam",
+  besant: "Besant Nagar",
+  "besant nagar": "Besant Nagar",
+  tambaram: "Tambaram",
+  chromepet: "Chromepet",
+  medavakkam: "Medavakkam",
+  pallikaranai: "Pallikaranai",
+  alwarpet: "Alwarpet",
+  koyambedu: "Koyambedu",
+  vadapalani: "Vadapalani",
+  "kk nagar": "KK Nagar",
+  "k.k. nagar": "KK Nagar",
+  kknagar: "KK Nagar"
+};
+
+const CITY_TYPO_MAP = {
+  chennai: "Chennai",
+  chenai: "Chennai",
+  madras: "Chennai",
+  bangalore: "Bangalore",
+  bengaluru: "Bangalore",
+  banglore: "Bangalore",
+  hyderabad: "Hyderabad",
+  hyd: "Hyderabad",
+  mumbai: "Mumbai",
+  bombay: "Mumbai",
+  pune: "Pune",
+  delhi: "Delhi",
+  coimbatore: "Coimbatore",
+  kovai: "Coimbatore",
+  madurai: "Madurai",
+  madrey: "Madurai",
+  trichy: "Tiruchirappalli",
+  tiruchirappalli: "Tiruchirappalli",
+  kochi: "Kochi",
+  cochin: "Kochi"
+};
+
+const SYSTEM_INSTRUCTIONS = `You are an expert real estate AI search query parser for "Rentosphere", India's modern zero-brokerage rental housing platform.
+Analyze the user's conversational rental query in ANY human language (English, Hindi, Hinglish, Tamil, Tanglish, regional mixtures, informal speech, typos, slang) and return a valid JSON object matching the platform filter schema.
 
 Return ONLY a JSON object with these fields (set field to null or omit if not requested by the user):
 {
@@ -74,9 +148,10 @@ Return ONLY a JSON object with these fields (set field to null or omit if not re
   "locality": string | null,
   "minRent": string numeric in INR (e.g. "15000") | null,
   "maxRent": string numeric in INR (e.g. "25000") | null,
-  "propertyType": "Apartment" | "Independent House" | "Villa" | "Builder Floor" | null,
+  "propertyType": "Apartment" | "Independent House" | "Villa" | "Builder Floor" | "Studio" | "PG/Co-living" | null,
   "furnishing": "Fully Furnished" | "Semi-Furnished" | "Unfurnished" | null,
   "preferredTenant": "Bachelors" | "Family" | "Anyone" | "Company" | null,
+  "availability": "Immediate" | "Within 15 Days" | "Within 30 Days" | null,
   "parking": boolean | null,
   "petFriendly": boolean | null,
   "amenities": array of strings from ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"],
@@ -86,15 +161,67 @@ Return ONLY a JSON object with these fields (set field to null or omit if not re
   "summary": string (clean natural language summary of search intent)
 }
 
-Important Domain Rules:
-- Indian currency shorthand: "25k" = "25000", "15 thousand" = "15000", "1.5 lakh" = "150000", "under 20k" -> maxRent: "20000", "between 15k and 25k" -> minRent: "15000", maxRent: "25000", "above 30k" -> minRent: "30000".
-- BHK configurations (NO SPACES in output): "1rk" / "studio" -> "1RK", "1bhk" / "single bedroom" -> "1BHK", "2bhk" -> "2BHK", "3bhk" -> "3BHK", "4bhk" -> "4BHK", "5bhk" -> "5BHK+".
-- Sorting intent: If user asks for "cheapest", "lowest rent", "affordable", "budget", "low price" -> set sortBy to "rent_asc". If user asks for "luxury", "most expensive", "high end", "premium" -> set sortBy to "rent_desc". If user asks for "latest", "recent", "newest" -> set sortBy to "newest". Otherwise null.
-- Standardize propertyType: "flat" or "society" -> "Apartment", "independent house" -> "Independent House", "villa" -> "Villa", "builder floor" -> "Builder Floor".
-- Standardize preferredTenant: "bachelor" or "students" or "boys" or "girls" -> "Bachelors", "family" -> "Family", "company" / "corporate" -> "Company".
-- Only include amenities from the allowed list: ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"].
-- Keyword: Landmarks, specific localities or IT parks not covered by locality/city (e.g., "near DLF", "Tidel park", "near metro", "sea view", "lake view").
-- Do not invent criteria the user did not state.`;
+Important Domain & Linguistic Rules:
+1. Multi-Lingual & Hinglish Comprehension:
+   - Users may write in Hindi, Hinglish, Tamil, or colloquial mixtures:
+     * "velachery me sasta 2bhk chahiye 25 hazar tak" -> locality: "Velachery", bhkType: "2BHK", maxRent: "25000", sortBy: "rent_asc"
+     * "bina brokerage wala ghar adyar me" -> locality: "Adyar", propertyType: "Independent House"
+     * "omr side pet friendly flat kam rent wala" -> locality: "OMR", petFriendly: true, propertyType: "Apartment", sortBy: "rent_asc"
+     * "15 hazar me badhiya 1bhk" -> maxRent: "15000", bhkType: "1BHK"
+     * "ghar dhoondh do family ke liye chennai me" -> city: "Chennai", preferredTenant: "Family", propertyType: "Independent House"
+2. Typo & Phonetic Correction:
+   - Correct misspellings of localities and cities:
+     * "velchery", "velacherry" -> "Velachery"
+     * "anagar", "annanagar" -> "Anna Nagar"
+     * "tnagar", "t nagar", "t.nagar" -> "T. Nagar"
+     * "solinganallur", "shollinganallur" -> "Sholinganallur"
+     * "poroor" -> "Porur"
+     * "bengaluru", "banglore" -> "Bangalore"
+     * "madrey" -> "Madurai"
+     * "swiming pool" -> "Swimming Pool"
+     * "apartmnt", "flat" -> "Apartment"
+3. Numbering & Currency Shorthand:
+   - "hazar", "hazaar", "k", "grand", "thousand" = 1000 (e.g. "15 hazar" = "15000", "25k" = "25000").
+   - "lakh", "lac", "L" = 100000 (e.g. "1.5 lakh" = "150000").
+   - Bounds: "under", "below", "less than", "within", "tak", "ke andar", "se kam" -> maxRent.
+   - Bounds: "above", "more than", "minimum", "se zyada", "se upar" -> minRent.
+   - "between 15k and 25k" / "15 se 25 hazar" -> minRent: "15000", maxRent: "25000".
+4. BHK Configurations (STRICTLY NO SPACES IN VALUE):
+   - "1rk", "studio" -> "1RK"
+   - "1bhk", "ek bhk", "single bedroom" -> "1BHK"
+   - "2bhk", "do bhk", "double bedroom" -> "2BHK"
+   - "3bhk", "teen bhk" -> "3BHK"
+   - "4bhk", "char bhk" -> "4BHK"
+   - "5bhk", "5bhk+" -> "5BHK+"
+5. Sorting Intent & Budget Phrasing:
+   - "sasta", "saste me", "kam rent", "kam kiraya", "cheapest", "lowest rent", "affordable", "budget", "budget friendly", "low price", "low range price", "low range", "low budget", "economical" -> sortBy: "rent_asc"
+   - "mehenga", "luxury", "badhiya", "posh", "most expensive", "high end", "premium" -> sortBy: "rent_desc"
+   - "aaj ka", "naya", "newest", "latest", "recent" -> sortBy: "newest"
+   - Otherwise null.
+6. Availability Intent:
+   - "immediate", "immediately", "imidiately", "ready to move", "ready to move in", "ready to shift", "asap", "urgently", "turant", "abhi chahiye" -> availability: "Immediate"
+   - "within 15 days", "in 15 days", "next 2 weeks", "within two weeks", "15 din me" -> availability: "Within 15 Days"
+   - "within 30 days", "within a month", "next month", "1 mahine me" -> availability: "Within 30 Days"
+7. Property Type:
+   - "house", "makaan", "ghar", "independent house", "individual house", "standalone", "bungalow" -> "Independent House"
+   - "flat", "society", "apartment", "condo" -> "Apartment"
+   - "villa", "kothi", "bangla" -> "Villa"
+   - "builder floor", "floor" -> "Builder Floor"
+   - "studio", "studio apartment" -> "Studio"
+   - "pg", "paying guest", "co-living", "hostel" -> "PG/Co-living"
+8. Preferred Tenant:
+   - "bachelor", "ladke", "ladkiya", "students", "boys", "girls" -> "Bachelors"
+   - "family", "parivar", "married couple" -> "Family"
+   - "company", "corporate" -> "Company"
+   - "anyone" -> "Anyone"
+9. Amenities, Pets & Parking:
+   - "allow pets to stay", "allow pets", "pets allowed", "pet friendly", "pets can stay", "kutta/billi allowed", "dog allowed", "cat allowed" -> petFriendly: true
+   - "gadi parking", "car park", "parking", "covered parking", "garage" -> parking: true
+   - Only include amenities from allowed list: ["Lift", "Power Backup", "Gym", "Swimming Pool", "Gated Security", "Clubhouse", "Park", "Gas Pipeline", "Wi-Fi"]
+10. Cleaner Residual Keyword:
+   - Landmarks, tech parks, society names, or metro stations (e.g. "near DLF", "Tidel park", "near metro").
+   - DO NOT put conversational filler like "chahiye", "dhoondo", "batao", "sasta", "bhai", "immediate", "pets" into keyword.
+11. Do not invent criteria the user did not state.`;
 
 /**
  * Sanitizes and normalizes output from any parser (LLM or heuristic)
@@ -149,10 +276,12 @@ function sanitizeParsedFilters(raw, originalPrompt) {
   // Property Type
   if (raw.propertyType) {
     const pt = String(raw.propertyType).trim().toLowerCase();
-    if (pt.includes("villa")) filters.propertyType = "Villa";
-    else if (pt.includes("independent") || pt.includes("house")) filters.propertyType = "Independent House";
+    if (pt.includes("villa") || pt.includes("kothi") || pt.includes("bangla")) filters.propertyType = "Villa";
+    else if (pt.includes("independent") || pt.includes("house") || pt.includes("makaan") || pt.includes("ghar")) filters.propertyType = "Independent House";
     else if (pt.includes("builder") || pt.includes("floor")) filters.propertyType = "Builder Floor";
-    else if (pt.includes("apartment") || pt.includes("flat") || pt.includes("condo")) filters.propertyType = "Apartment";
+    else if (pt.includes("studio")) filters.propertyType = "Studio";
+    else if (pt.includes("pg") || pt.includes("paying") || pt.includes("co-living") || pt.includes("coliving") || pt.includes("hostel")) filters.propertyType = "PG/Co-living";
+    else if (pt.includes("apartment") || pt.includes("flat") || pt.includes("condo") || pt.includes("society")) filters.propertyType = "Apartment";
   }
 
   // Furnishing
@@ -167,9 +296,28 @@ function sanitizeParsedFilters(raw, originalPrompt) {
   if (raw.preferredTenant) {
     const t = String(raw.preferredTenant).trim().toLowerCase();
     if (t.includes("bachelor") || t.includes("student") || t.includes("boy") || t.includes("girl")) filters.preferredTenant = "Bachelors";
-    else if (t.includes("family")) filters.preferredTenant = "Family";
-    else if (t.includes("company")) filters.preferredTenant = "Company";
+    else if (t.includes("family") || t.includes("parivar")) filters.preferredTenant = "Family";
+    else if (t.includes("company") || t.includes("corp")) filters.preferredTenant = "Company";
     else if (t.includes("anyone") || t.includes("any")) filters.preferredTenant = "Anyone";
+  }
+
+  // Availability
+  if (raw.availability) {
+    const av = String(raw.availability).trim().toLowerCase();
+    if (
+      av.includes("immed") ||
+      av.includes("imid") ||
+      av.includes("ready") ||
+      av.includes("asap") ||
+      av.includes("turant") ||
+      av.includes("now")
+    ) {
+      filters.availability = "Immediate";
+    } else if (av.includes("15")) {
+      filters.availability = "Within 15 Days";
+    } else if (av.includes("30") || av.includes("month")) {
+      filters.availability = "Within 30 Days";
+    }
   }
 
   // Parking & Pet Friendly
@@ -196,6 +344,7 @@ function sanitizeParsedFilters(raw, originalPrompt) {
     if (filters.bhkType) tags.push(filters.bhkType);
     if (filters.locality) tags.push(filters.locality);
     else if (filters.city) tags.push(filters.city);
+    if (filters.propertyType) tags.push(filters.propertyType);
     if (filters.minRent && filters.maxRent) {
       tags.push(`₹${Number(filters.minRent).toLocaleString("en-IN")} – ₹${Number(filters.maxRent).toLocaleString("en-IN")}`);
     } else if (filters.maxRent) {
@@ -203,10 +352,13 @@ function sanitizeParsedFilters(raw, originalPrompt) {
     } else if (filters.minRent) {
       tags.push(`Min ₹${Number(filters.minRent).toLocaleString("en-IN")}`);
     }
+    if (filters.availability) tags.push(filters.availability === "Immediate" ? "Immediate Move-in" : filters.availability);
     if (filters.furnishing) tags.push(filters.furnishing);
     if (filters.preferredTenant) tags.push(`For ${filters.preferredTenant}`);
     if (filters.parking) tags.push("Car Parking");
     if (filters.petFriendly) tags.push("Pet Friendly");
+    if (filters.sortBy === "rent_asc") tags.push("Lowest Price");
+    if (filters.sortBy === "rent_desc") tags.push("Premium");
     if (filters.amenities) tags.push(...filters.amenities);
   }
 
@@ -326,16 +478,34 @@ async function parseWithOpenAI(prompt, apiKey) {
 /**
  * Parses numeric currency strings with k/lakh/thousand suffixes into integer rupees.
  */
+/**
+ * Parses numeric currency strings with k/lakh/thousand/hazar suffixes into integer rupees.
+ */
 function parseCurrencyString(rawStr) {
   if (!rawStr) return null;
   const cleaned = rawStr.toLowerCase().replace(/[,\s₹rs]/g, "");
 
-  if (cleaned.endsWith("k")) {
-    const num = parseFloat(cleaned.slice(0, -1));
+  if (cleaned.endsWith("k") || cleaned.endsWith("grand")) {
+    const num = parseFloat(cleaned.replace(/(k|grand)/, ""));
     return isNaN(num) ? null : Math.round(num * 1000);
   }
-  if (cleaned.endsWith("l") || cleaned.endsWith("lac") || cleaned.endsWith("lakh")) {
-    const num = parseFloat(cleaned.replace(/(lac|lakh|l)/, ""));
+  if (
+    cleaned.endsWith("hazar") ||
+    cleaned.endsWith("hazaar") ||
+    cleaned.endsWith("haz") ||
+    cleaned.endsWith("thousand") ||
+    cleaned.endsWith("thou")
+  ) {
+    const num = parseFloat(cleaned.replace(/(hazaar|hazar|haz|thousand|thou)/, ""));
+    return isNaN(num) ? null : Math.round(num * 1000);
+  }
+  if (
+    cleaned.endsWith("l") ||
+    cleaned.endsWith("lac") ||
+    cleaned.endsWith("lakh") ||
+    cleaned.endsWith("lakhs")
+  ) {
+    const num = parseFloat(cleaned.replace(/(lakhs|lakh|lac|l)/, ""));
     return isNaN(num) ? null : Math.round(num * 100000);
   }
   const num = parseInt(cleaned, 10);
@@ -359,25 +529,30 @@ function parseWithLocalHeuristics(prompt) {
   const filters = {};
   const tags = [];
 
-  // 1. BHK Type Extraction
-  const bhkMatch = text.match(/\b([1-5])\s*(?:\+|\s*plus)?\s*(?:bhk|bedroom|bed|b\.h\.k)\b/i) ||
-                   text.match(/\b(1\s*rk|studio)\b/i);
+  // 1. BHK Type Extraction (English + Hindi / Hinglish)
+  const bhkMatch =
+    text.match(/\b([1-5])\s*(?:\+|\s*plus)?\s*(?:bhk|bedroom|bed|b\.h\.k|kamra)\b/i) ||
+    text.match(/\b(ek|do|teen|char|paanch)\s*(?:bhk|bedroom|bed|kamra)\b/i) ||
+    text.match(/\b(1\s*rk|studio)\b/i);
   if (bhkMatch) {
     const val = bhkMatch[1].toLowerCase();
     if (val.includes("rk") || val.includes("studio")) {
       filters.bhkType = "1RK";
       tags.push("1RK");
     } else {
-      const num = parseInt(val, 10);
+      const hindiMap = { ek: 1, do: 2, teen: 3, char: 4, paanch: 5 };
+      const num = hindiMap[val] || parseInt(val, 10);
       filters.bhkType = num >= 5 ? "5BHK+" : `${num}BHK`;
       tags.push(filters.bhkType);
     }
     text = text.replace(bhkMatch[0], " ");
   }
 
-  // 2. Budget / Rent Extraction
-  // Range: "between 15k and 25k", "15000 to 25000", "15k - 25k"
-  const rangeMatch = text.match(/(?:between|from)?\s*([0-9]+(?:\.[0-9]+)?\s*[kK]?)\s*(?:-|to|and)\s*([0-9]+(?:\.[0-9]+)?\s*[kK]?)/);
+  // 2. Budget / Rent Extraction (English + Hindi / Hinglish)
+  // Range: "between 15k and 25k", "15000 to 25000", "15k - 25k", "15 hazar se 25 hazar tak"
+  const rangeMatch = text.match(
+    /(?:between|from|se)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)\s*(?:-|to|and|se|tak)\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)/i
+  );
   if (rangeMatch) {
     const minVal = parseCurrencyString(rangeMatch[1]);
     const maxVal = parseCurrencyString(rangeMatch[2]);
@@ -389,9 +564,15 @@ function parseWithLocalHeuristics(prompt) {
     }
   }
 
-  // Max Rent: "under 25k", "below 30000", "upto 20k", "< 25k", "within 20k"
+  // Max Rent: "under 25k", "below 30000", "upto 20k", "25 hazar tak", "20k ke andar", "se kam"
   if (!filters.maxRent) {
-    const maxMatch = text.match(/(?:under|below|less than|max|upto|up to|within|budget of|<|<=)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*[kKlL]?)/i);
+    const maxMatch =
+      text.match(
+        /(?:under|below|less than|max|upto|up to|within|budget of|<|<=|tak|ke andar|se kam)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)/i
+      ) ||
+      text.match(
+        /([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand))\s*(?:tak|ke andar|se kam|me|mein)/i
+      );
     if (maxMatch) {
       const maxVal = parseCurrencyString(maxMatch[1]);
       if (maxVal) {
@@ -402,9 +583,15 @@ function parseWithLocalHeuristics(prompt) {
     }
   }
 
-  // Min Rent: "above 15k", "min 10000", "> 15k"
+  // Min Rent: "above 15k", "min 10000", "15 hazar se zyada", "15k se upar"
   if (!filters.minRent) {
-    const minMatch = text.match(/(?:above|more than|min|starting from|minimum|>|>=)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*[kKlL]?)/i);
+    const minMatch =
+      text.match(
+        /(?:above|more than|min|starting from|minimum|>|>=|se zyada|se upar)\s*(?:₹|rs\.?|inr)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand)?)/i
+      ) ||
+      text.match(
+        /([0-9]+(?:\.[0-9]+)?\s*(?:k|l|lac|lakh|hazar|hazaar|thousand|grand))\s*(?:se zyada|se upar)/i
+      );
     if (minMatch) {
       const minVal = parseCurrencyString(minMatch[1]);
       if (minVal) {
@@ -415,14 +602,12 @@ function parseWithLocalHeuristics(prompt) {
     }
   }
 
-  // 3. Location & Locality Extraction
+  // 3. Location & Locality Extraction (with Typo / Phonetic normalization)
   let matchedCity = null;
-  for (const city of KNOWN_CITIES) {
-    const cityRegex = new RegExp(`\\b${city}\\b`, "i");
+  for (const [typo, standardCity] of Object.entries(CITY_TYPO_MAP)) {
+    const cityRegex = new RegExp(`\\b${typo}\\b`, "i");
     if (cityRegex.test(text)) {
-      matchedCity = city.charAt(0).toUpperCase() + city.slice(1);
-      if (city === "trichy") matchedCity = "Tiruchirappalli";
-      if (city === "bengaluru") matchedCity = "Bangalore";
+      matchedCity = standardCity;
       filters.city = matchedCity;
       tags.push(matchedCity);
       text = text.replace(cityRegex, " ");
@@ -431,10 +616,10 @@ function parseWithLocalHeuristics(prompt) {
   }
 
   let matchedLocality = null;
-  for (const loc of KNOWN_LOCALITIES) {
-    const locRegex = new RegExp(`\\b${loc}\\b`, "i");
+  for (const [typo, standardLocality] of Object.entries(LOCALITY_TYPO_MAP)) {
+    const locRegex = new RegExp(`\\b${typo}\\b`, "i");
     if (locRegex.test(text)) {
-      matchedLocality = loc.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+      matchedLocality = standardLocality;
       filters.locality = matchedLocality;
       tags.push(matchedLocality);
       text = text.replace(locRegex, " ");
@@ -442,76 +627,121 @@ function parseWithLocalHeuristics(prompt) {
     }
   }
 
-  // Catch generic "in <Word>" or "near <Word>" if neither city nor locality matched
+  // Catch generic "in <Word>" or "near <Word>" or "<Word> me" if neither city nor locality matched
   if (!matchedCity && !matchedLocality) {
-    const locContextMatch = text.match(/\b(?:in|near|around|at)\s+([a-zA-Z\s]{3,20})(?:$|\s+(?:under|with|for|bhk|below|having))/i);
+    const locContextMatch =
+      text.match(/\b(?:in|near|around|at)\s+([a-zA-Z\s]{3,20})(?:$|\s+(?:under|with|for|bhk|below|having|me|tak))/i) ||
+      text.match(/([a-zA-Z\s]{3,20})\s+(?:me|mein|side|ke paas)/i);
     if (locContextMatch && locContextMatch[1]) {
       const extractedLoc = locContextMatch[1].trim();
-      const skipWords = ["the", "a", "an", "any", "good", "nice", "flat", "apartment", "house"];
+      const skipWords = [
+        "the", "a", "an", "any", "good", "nice", "flat", "apartment", "house",
+        "ghar", "makaan", "sasta", "kam", "badhiya", "chennai", "bangalore"
+      ];
       if (!skipWords.includes(extractedLoc.toLowerCase())) {
-        filters.locality = extractedLoc.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+        filters.locality = extractedLoc
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
         tags.push(filters.locality);
         text = text.replace(locContextMatch[0], " ");
       }
     }
   }
 
-  // 4. Property Type
+  // 3.5. Availability Intent Extraction (Immediate, 15 Days, 30 Days)
+  if (
+    /\b(?:immediate|immediately|imidiately|immedate|immediatly|ready to move|ready to move in|ready to shift|asap|turant|ready possession|abhi chahiye)\b/i.test(
+      text
+    )
+  ) {
+    filters.availability = "Immediate";
+    tags.push("Immediate Move-in");
+    text = text.replace(
+      /\b(?:immediate|immediately|imidiately|immedate|immediatly|ready to move|ready to move in|ready to shift|asap|turant|ready possession|abhi chahiye)\b/gi,
+      " "
+    );
+  } else if (/\b(?:within 15 days|15 days|in 15 days|next 2 weeks|within two weeks|15 din)\b/i.test(text)) {
+    filters.availability = "Within 15 Days";
+    tags.push("Within 15 Days");
+    text = text.replace(/\b(?:within 15 days|15 days|in 15 days|next 2 weeks|within two weeks|15 din)\b/gi, " ");
+  } else if (/\b(?:within 30 days|30 days|within a month|within 1 month|next month|1 mahine)\b/i.test(text)) {
+    filters.availability = "Within 30 Days";
+    tags.push("Within 30 Days");
+    text = text.replace(/\b(?:within 30 days|30 days|within a month|within 1 month|next month|1 mahine)\b/gi, " ");
+  }
+
+  // 4. Property Type (English + Hinglish)
   if (/\b(?:apartment|flat|flats|condo|society)\b/i.test(text)) {
     filters.propertyType = "Apartment";
     tags.push("Apartment");
     text = text.replace(/\b(?:apartment|flat|flats|condo|society)\b/gi, " ");
-  } else if (/\b(?:villa|villas|bungalow)\b/i.test(text)) {
+  } else if (/\b(?:villa|villas|bungalow|kothi|bangla)\b/i.test(text)) {
     filters.propertyType = "Villa";
     tags.push("Villa");
-    text = text.replace(/\b(?:villa|villas|bungalow)\b/gi, " ");
-  } else if (/\b(?:independent house|individual house|house|standalone)\b/i.test(text)) {
+    text = text.replace(/\b(?:villa|villas|bungalow|kothi|bangla)\b/gi, " ");
+  } else if (/\b(?:independent house|individual house|house|standalone|makaan|ghar)\b/i.test(text)) {
     filters.propertyType = "Independent House";
     tags.push("Independent House");
-    text = text.replace(/\b(?:independent house|individual house|house|standalone)\b/gi, " ");
+    text = text.replace(/\b(?:independent house|individual house|house|standalone|makaan|ghar)\b/gi, " ");
   } else if (/\b(?:builder floor|floor)\b/i.test(text)) {
     filters.propertyType = "Builder Floor";
     tags.push("Builder Floor");
     text = text.replace(/\b(?:builder floor|floor)\b/gi, " ");
+  } else if (/\b(?:studio|studio apartment)\b/i.test(text)) {
+    filters.propertyType = "Studio";
+    tags.push("Studio");
+    text = text.replace(/\b(?:studio|studio apartment)\b/gi, " ");
+  } else if (/\b(?:pg|paying guest|co-living|coliving|hostel)\b/i.test(text)) {
+    filters.propertyType = "PG/Co-living";
+    tags.push("PG/Co-living");
+    text = text.replace(/\b(?:pg|paying guest|co-living|coliving|hostel)\b/gi, " ");
   }
 
-  // 5. Furnishing Status
-  if (/\b(?:fully furnished|full furnished|well furnished)\b/i.test(text)) {
+  // 5. Furnishing Status (English + Hinglish)
+  if (/\b(?:fully furnished|full furnished|well furnished|saman ke sath)\b/i.test(text)) {
     filters.furnishing = "Fully Furnished";
     tags.push("Fully Furnished");
-    text = text.replace(/\b(?:fully furnished|full furnished|well furnished)\b/gi, " ");
-  } else if (/\b(?:semi furnished|semi-furnished)\b/i.test(text)) {
+    text = text.replace(/\b(?:fully furnished|full furnished|well furnished|saman ke sath)\b/gi, " ");
+  } else if (/\b(?:semi furnished|semi-furnished|adhe saman)\b/i.test(text)) {
     filters.furnishing = "Semi-Furnished";
     tags.push("Semi-Furnished");
-    text = text.replace(/\b(?:semi furnished|semi-furnished)\b/gi, " ");
-  } else if (/\b(?:unfurnished|raw|empty)\b/i.test(text)) {
+    text = text.replace(/\b(?:semi furnished|semi-furnished|adhe saman)\b/gi, " ");
+  } else if (/\b(?:unfurnished|raw|empty|khali flat|bina saman)\b/i.test(text)) {
     filters.furnishing = "Unfurnished";
     tags.push("Unfurnished");
-    text = text.replace(/\b(?:unfurnished|raw|empty)\b/gi, " ");
+    text = text.replace(/\b(?:unfurnished|raw|empty|khali flat|bina saman)\b/gi, " ");
   }
 
-  // 6. Tenant Preference
-  if (/\b(?:bachelor|bachelors|singles|boys|girls|students)\b/i.test(text)) {
+  // 6. Tenant Preference (English + Hinglish)
+  if (/\b(?:bachelor|bachelors|singles|boys|girls|students|ladke|ladkiya)\b/i.test(text)) {
     filters.preferredTenant = "Bachelors";
     tags.push("Bachelors");
-    text = text.replace(/\b(?:bachelor|bachelors|singles|boys|girls|students)\b/gi, " ");
-  } else if (/\b(?:family|families)\b/i.test(text)) {
+    text = text.replace(/\b(?:bachelor|bachelors|singles|boys|girls|students|ladke|ladkiya)\b/gi, " ");
+  } else if (/\b(?:family|families|parivar|family only)\b/i.test(text)) {
     filters.preferredTenant = "Family";
     tags.push("Family");
-    text = text.replace(/\b(?:family|families)\b/gi, " ");
+    text = text.replace(/\b(?:family|families|parivar|family only)\b/gi, " ");
   }
 
-  // 7. Amenities: Parking, Pets & Special Amenities
-  if (/\b(?:pet friendly|pet-friendly|pets allowed|dog|cat)\b/i.test(text)) {
+  // 7. Amenities: Parking, Pets & Special Amenities (English + Hinglish)
+  if (
+    /\b(?:allow pets to stay|allow pets|pets to stay|pets can stay|pet friendly|pet-friendly|pets allowed|dog|cat|kutta|billi|pet|pets)\b/i.test(
+      text
+    )
+  ) {
     filters.petFriendly = true;
     tags.push("Pet Friendly");
-    text = text.replace(/\b(?:pet friendly|pet-friendly|pets allowed|dog|cat)\b/gi, " ");
+    text = text.replace(
+      /\b(?:allow pets to stay|allow pets|pets to stay|pets can stay|pet friendly|pet-friendly|pets allowed|dog|cat|kutta|billi|pet|pets)\b/gi,
+      " "
+    );
   }
 
-  if (/\b(?:car parking|covered parking|car park|parking|garage)\b/i.test(text)) {
+  if (/\b(?:car parking|covered parking|car park|parking|garage|gadi parking)\b/i.test(text)) {
     filters.parking = true;
     tags.push("Car Parking");
-    text = text.replace(/\b(?:car parking|covered parking|car park|parking|garage)\b/gi, " ");
+    text = text.replace(/\b(?:car parking|covered parking|car park|parking|garage|gadi parking)\b/gi, " ");
   }
 
   const detectedAmenities = [];
@@ -529,19 +759,35 @@ function parseWithLocalHeuristics(prompt) {
     filters.amenities = detectedAmenities;
   }
 
-  // 8. Sorting Intent Extraction
-  if (/\b(?:cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly)\b/i.test(text)) {
+  // 8. Sorting Intent Extraction (English + Hinglish)
+  if (
+    /\b(?:sasta|saste|kam rent|kam kiraya|kam paise|cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly|low range price|low range|low budget|lowest price|budget price|economical)\b/i.test(
+      text
+    )
+  ) {
     filters.sortBy = "rent_asc";
     tags.push("Lowest Price");
-    text = text.replace(/\b(?:cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly)\b/gi, " ");
-  } else if (/\b(?:luxury|premium|most expensive|high end|high to low)\b/i.test(text)) {
+    text = text.replace(
+      /\b(?:sasta|saste|kam rent|kam kiraya|kam paise|cheapest|cheap|lowest rent|low price|affordable|low to high|budget friendly|low range price|low range|low budget|lowest price|budget price|economical)\b/gi,
+      " "
+    );
+  } else if (
+    /\b(?:mehenga|luxury|badhiya|premium|posh|most expensive|high end|high to low)\b/i.test(
+      text
+    )
+  ) {
     filters.sortBy = "rent_desc";
     tags.push("Premium");
-    text = text.replace(/\b(?:luxury|premium|most expensive|high end|high to low)\b/gi, " ");
-  } else if (/\b(?:newest|newly added|recent|latest|fresh)\b/i.test(text)) {
+    text = text.replace(
+      /\b(?:mehenga|luxury|badhiya|premium|posh|most expensive|high end|high to low)\b/gi,
+      " "
+    );
+  } else if (
+    /\b(?:aaj ka|naya|newest|newly added|recent|latest|fresh)\b/i.test(text)
+  ) {
     filters.sortBy = "newest";
     tags.push("Newest First");
-    text = text.replace(/\b(?:newest|newly added|recent|latest|fresh)\b/gi, " ");
+    text = text.replace(/\b(?:aaj ka|naya|newest|newly added|recent|latest|fresh)\b/gi, " ");
   }
 
   // 9. Residual Keyword Extraction (Society, Landmark, Project Name)
@@ -549,13 +795,19 @@ function parseWithLocalHeuristics(prompt) {
     "find", "me", "a", "an", "the", "in", "near", "with", "and", "or", "for",
     "i", "want", "need", "looking", "search", "show", "get", "please", "can",
     "you", "around", "at", "having", "with", "like", "good", "best", "cheap",
-    "budget", "luxury", "available", "to", "rent", "rental", "properties", "property"
+    "budget", "luxury", "available", "to", "rent", "rental", "properties", "property",
+    "immediate", "immediately", "imidiately", "allow", "stay", "low", "range", "price",
+    // Hindi / Hinglish / Vernacular
+    "chahiye", "dhoondo", "dhoondh", "bhai", "yaar", "wala", "wali", "wale", "karo", "dikhao",
+    "batao", "hai", "kya", "me", "mein", "pe", "par", "se", "ke", "ki", "ko", "la", "ku",
+    "venum", "iruka", "maari", "panra", "acha", "achha", "badhiya", "sasta", "saste", "kam",
+    "kiraya", "ghar", "makaan", "room", "kamra", "flat", "paas", "side", "bina", "brokerage"
   ]);
 
   const cleanResidual = text
     .replace(/[^a-zA-Z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter(word => word.length > 2 && !stopWords.has(word.toLowerCase()))
+    .filter((word) => word.length > 2 && !stopWords.has(word.toLowerCase()))
     .join(" ")
     .trim();
 
@@ -563,9 +815,12 @@ function parseWithLocalHeuristics(prompt) {
     filters.keyword = cleanResidual;
   }
 
-  const summary = tags.length > 0
-    ? `Searching for ${tags.join(" • ")}`
-    : (cleanResidual ? `Searching for "${cleanResidual}"` : "Showing all available properties.");
+  const summary =
+    tags.length > 0
+      ? `Searching for ${tags.join(" • ")}`
+      : cleanResidual
+      ? `Searching for "${cleanResidual}"`
+      : "Showing all available properties.";
 
   return {
     success: true,
